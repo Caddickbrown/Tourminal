@@ -596,6 +596,10 @@ def write_in_terminal(stdscr, title, tags):
                     cursor_col -= 1
                     current_line = current_line[:cursor_col] + current_line[cursor_col+1:]
                     redraw_current_line()
+            elif char == curses.KEY_DC or char == 330:  # Delete key
+                if cursor_col < len(current_line):
+                    current_line = current_line[:cursor_col] + current_line[cursor_col+1:]
+                    redraw_current_line()
             elif char == curses.KEY_LEFT:
                 if cursor_col > 0:
                     cursor_col -= 1
@@ -794,6 +798,16 @@ def write_in_terminal_with_prefill(stdscr, title, tags, prefill_content):
                     del content_lines[current_line_idx]
                     current_line_idx -= 1
                     cursor_col = len(prev_line)
+                    redraw_content()
+            elif char == curses.KEY_DC or char == 330:  # Delete key
+                line = content_lines[current_line_idx]
+                if cursor_col < len(line):
+                    content_lines[current_line_idx] = line[:cursor_col] + line[cursor_col+1:]
+                    redraw_content()
+                elif current_line_idx < len(content_lines) - 1:
+                    # At end of line, merge with next line
+                    content_lines[current_line_idx] = line + content_lines[current_line_idx + 1]
+                    del content_lines[current_line_idx + 1]
                     redraw_content()
             elif char == curses.KEY_UP:
                 if current_line_idx > 0:
@@ -1403,6 +1417,8 @@ def settings_menu(stdscr):
         "Export Settings",
         "Import Settings",
         "",
+        "Debug Tools",
+        "",
         "Back"
     ]
     
@@ -1466,6 +1482,8 @@ def settings_menu(stdscr):
             elif menu[current_row] == "Import Settings":
                 import_settings(stdscr)
                 settings = get_settings()
+            elif menu[current_row] == "Debug Tools":
+                debug_tools_menu(stdscr)
             elif menu[current_row] == "Back":
                 break
         elif key == 27:  # ESC
@@ -1878,6 +1896,323 @@ def view_template_details(stdscr, template):
         elif key == curses.KEY_END:
             start_line = max(0, len(lines) - content_height + 2)
         elif key == 27:  # ESC
+            break
+
+def debug_tools_menu(stdscr):
+    menu = [
+        "Journal Directory Info",
+        "Parse Entries Debug",
+        "Keyboard Key Codes",
+        "Create Test File",
+        "Tutorial / Help",
+        "",
+        "Back"
+    ]
+    current_row = 0
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "Debug Tools")
+        safe_addstr(stdscr, 1, 0, "Select a debug tool to run")
+        y_pos = 3
+        for idx, item in enumerate(menu):
+            if item == "":
+                y_pos += 1
+                continue
+            attr = curses.A_REVERSE if idx == current_row else 0
+            safe_addstr(stdscr, y_pos, 2, f"> {item}" if idx == current_row else f"  {item}", attr)
+            y_pos += 1
+        show_status_bar(stdscr, "ESC or Back to return to Settings")
+        key = stdscr.getch()
+        if key == curses.KEY_UP:
+            current_row = (current_row - 1) % len(menu)
+            while current_row > 0 and menu[current_row] == "":
+                current_row = (current_row - 1) % len(menu)
+        elif key == curses.KEY_DOWN:
+            current_row = (current_row + 1) % len(menu)
+            while current_row < len(menu) - 1 and menu[current_row] == "":
+                current_row = (current_row + 1) % len(menu)
+        elif is_selection_key(key):
+            if menu[current_row] == "Journal Directory Info":
+                debug_journal_info(stdscr)
+            elif menu[current_row] == "Parse Entries Debug":
+                debug_parse_entries(stdscr)
+            elif menu[current_row] == "Keyboard Key Codes":
+                debug_keyboard_keys(stdscr)
+            elif menu[current_row] == "Create Test File":
+                create_test_file(stdscr)
+            elif menu[current_row] == "Tutorial / Help":
+                show_tutorial(stdscr)
+            elif menu[current_row] == "Back":
+                break
+        elif key == 27:  # ESC
+            break
+
+def debug_journal_info(stdscr):
+    settings = get_settings()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Journal Debug Information")
+    safe_addstr(stdscr, 2, 0, f"Journal Directory: {settings['journal_directory']}")
+    if os.path.exists(settings["journal_directory"]):
+        safe_addstr(stdscr, 3, 0, "✓ Journal directory exists")
+        try:
+            all_files = os.listdir(settings["journal_directory"])
+            safe_addstr(stdscr, 4, 0, f"All files in directory ({len(all_files)}):")
+            for i, file in enumerate(all_files[:10]):
+                safe_addstr(stdscr, 5 + i, 2, f"  {file}")
+            if len(all_files) > 10:
+                safe_addstr(stdscr, 15, 2, f"  ... and {len(all_files) - 10} more files")
+            md_files = [f for f in all_files if f.endswith('.md')]
+            safe_addstr(stdscr, 17, 0, f"Markdown files ({len(md_files)}):")
+            for i, file in enumerate(md_files):
+                safe_addstr(stdscr, 18 + i, 2, f"  {file}")
+        except Exception as e:
+            safe_addstr(stdscr, 4, 0, f"Error listing directory: {e}")
+    else:
+        safe_addstr(stdscr, 3, 0, "✗ Journal directory does not exist")
+    safe_addstr(stdscr, 25, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def debug_parse_entries(stdscr):
+    files = get_daily_files()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Debug: Entry Parsing")
+    if not files:
+        safe_addstr(stdscr, 2, 0, "No files found")
+        safe_addstr(stdscr, 4, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    height, width = stdscr.getmaxyx()
+    y_pos = 2
+    for filename in files[:3]:
+        if y_pos >= height - 5:
+            break
+        safe_addstr(stdscr, y_pos, 0, f"File: {filename}")
+        y_pos += 1
+        content = read_daily_file(filename)
+        safe_addstr(stdscr, y_pos, 0, f"Content length: {len(content)}")
+        y_pos += 1
+        preview = content[:200].replace('\n', '\\n')
+        preview = preview[:width-20]
+        safe_addstr(stdscr, y_pos, 0, f"Preview: {preview}")
+        y_pos += 1
+        entries = parse_entries_from_content(content, filename)
+        safe_addstr(stdscr, y_pos, 0, f"Parsed {len(entries)} entries:")
+        y_pos += 1
+        for i, entry in enumerate(entries):
+            if y_pos >= height - 5:
+                break
+            title = entry['title'][:width-15]
+            safe_addstr(stdscr, y_pos, 2, f"Entry {i+1}: {title}")
+            y_pos += 1
+            tags = entry['tags'][:width-15] if entry['tags'] else ''
+            safe_addstr(stdscr, y_pos, 4, f"Tags: '{tags}'")
+            y_pos += 1
+            safe_addstr(stdscr, y_pos, 4, f"Content length: {len(entry['content'])}")
+            y_pos += 1
+            if entry['content']:
+                content_preview = entry['content'][:50].replace('\n', '\\n')
+                content_preview = content_preview[:width-20]
+                safe_addstr(stdscr, y_pos, 4, f"Content preview: {content_preview}")
+                y_pos += 1
+            y_pos += 1
+        y_pos += 1
+    safe_addstr(stdscr, height-2, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def debug_keyboard_keys(stdscr):
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Debug Keyboard Keys")
+    safe_addstr(stdscr, 1, 0, "Press keys to see their codes (ESC to exit)")
+    safe_addstr(stdscr, 3, 0, "Key Code:")
+    safe_addstr(stdscr, 4, 0, "Key Name:")
+    safe_addstr(stdscr, 5, 0, "Hex Code:")
+    safe_addstr(stdscr, 6, 0, "Character:")
+    safe_addstr(stdscr, 8, 0, "Common Keys Reference:")
+    safe_addstr(stdscr, 9, 0, "  Enter: 10, 13, 459")
+    safe_addstr(stdscr, 10, 0, "  Space: 32")
+    safe_addstr(stdscr, 11, 0, "  ESC: 27")
+    safe_addstr(stdscr, 12, 0, "  Ctrl+N: 14")
+    safe_addstr(stdscr, 13, 0, "  Ctrl+O: 15")
+    safe_addstr(stdscr, 14, 0, "  Ctrl+F: 6")
+    safe_addstr(stdscr, 15, 0, "  Ctrl+S: 19")
+    safe_addstr(stdscr, 16, 0, "  Ctrl+Q: 17")
+    safe_addstr(stdscr, 17, 0, "  Backspace: 127, 8 (Windows), 263 (Linux)")
+    safe_addstr(stdscr, 18, 0, "  Delete (macOS): 330 (KEY_DC)")
+    safe_addstr(stdscr, 19, 0, "  Arrow Up: 259")
+    safe_addstr(stdscr, 20, 0, "  Arrow Down: 258")
+    safe_addstr(stdscr, 21, 0, "  Arrow Left: 260")
+    safe_addstr(stdscr, 22, 0, "  Arrow Right: 261")
+    safe_addstr(stdscr, 23, 0, "  Ctrl+Left: 550 (Linux)")
+    safe_addstr(stdscr, 24, 0, "  Ctrl+Right: 565 (Linux)")
+    safe_addstr(stdscr, 25, 0, "  Alt+Left: 548 (Linux)")
+    safe_addstr(stdscr, 26, 0, "  Ctrl+A: 1 (start of line)")
+    safe_addstr(stdscr, 27, 0, "  Ctrl+E: 5 (end of line)")
+    stdscr.refresh()
+    while True:
+        key = stdscr.getch()
+        if key == 27:
+            break
+        for i in range(3, 7):
+            stdscr.move(i, 10)
+            stdscr.clrtoeol()
+        try:
+            safe_addstr(stdscr, 3, 10, f"{key}")
+            key_name = "Unknown"
+            try:
+                if hasattr(curses, 'keyname'):
+                    key_name = curses.keyname(key).decode()
+                else:
+                    if key == 27:
+                        key_name = "ESC"
+                    elif key == 10 or key == 13:
+                        key_name = "Enter"
+                    elif key == 32:
+                        key_name = "Space"
+                    elif key == 127 or key == 8 or key == 263:
+                        key_name = "Backspace"
+                    elif key == 330:
+                        key_name = "KEY_DC (Delete)"
+                    elif key == 259:
+                        key_name = "Arrow Up"
+                    elif key == 258:
+                        key_name = "Arrow Down"
+                    elif key == 260:
+                        key_name = "Arrow Left"
+                    elif key == 261:
+                        key_name = "Arrow Right"
+                    elif key == 550:
+                        key_name = "Ctrl+Left"
+                    elif key == 565:
+                        key_name = "Ctrl+Right"
+                    elif key == 548:
+                        key_name = "Alt+Left"
+                    elif key == 1:
+                        key_name = "Ctrl+A"
+                    elif key == 5:
+                        key_name = "Ctrl+E"
+                    elif 32 <= key <= 126:
+                        key_name = f"'{chr(key)}'"
+            except:
+                key_name = "Unknown"
+            safe_addstr(stdscr, 4, 10, key_name)
+            safe_addstr(stdscr, 5, 10, f"0x{key:02x}")
+            if 32 <= key <= 126:
+                safe_addstr(stdscr, 6, 10, f"'{chr(key)}'")
+            else:
+                safe_addstr(stdscr, 6, 10, "N/A")
+        except Exception as e:
+            safe_addstr(stdscr, 3, 10, f"Error: {e}")
+        stdscr.refresh()
+
+def create_test_file(stdscr):
+    settings = get_settings()
+    test_filename = "test-journal.md"
+    test_content = """# Test Journal Entry\n\ntags: test, debug\n\nThis is a test journal entry to verify that the reading functionality works correctly.\n\n## Test Content\n\n- Item 1: Testing basic functionality\n- Item 2: Testing markdown formatting\n- Item 3: Testing file reading\n\n### Code Example\n\nprint(\"Hello, Journal!\")\n\nThis should be visible when reading the file.\n"""
+    filepath = os.path.join(settings["journal_directory"], test_filename)
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(test_content)
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "Test file created successfully!")
+        safe_addstr(stdscr, 1, 0, f"File: {filepath}")
+        safe_addstr(stdscr, 3, 0, "You can now try 'Read Daily File' to test the reading functionality.")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+    except Exception as e:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, f"Error creating test file: {e}")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
+        stdscr.getch()
+
+def show_tutorial(stdscr):
+    height, width = stdscr.getmaxyx()
+    tutorial_text = [
+        "Daily Journal - Terminal Journal Tutorial",
+        "",
+        "Navigation:",
+        "  ↑/↓ Arrow Keys - Navigate menus",
+        "  Enter or Space - Select option",
+        "  ESC - Go back/Exit",
+        "",
+        "Keyboard Shortcuts:",
+        "  Ctrl+N - New Entry (Terminal)",
+        "  Ctrl+O - Edit Today's Journal (Terminal)",
+        "  Ctrl+F - Search Entries",
+        "",
+        "Daily Journal Concept:",
+        "  • All entries from the same day are saved in one file",
+        "  • Each entry has its own title and tags",
+        "  • Perfect for multiple entries per day",
+        "  • Easy to review an entire day's thoughts",
+        "",
+        "Writing Entries:",
+        "  New Entry (Terminal) - Write directly in terminal",
+        "  New Entry (Editor) - Use external editor",
+        "  Ctrl+D - Finish writing entry",
+        "  Ctrl+S - Save in editor mode",
+        "  Ctrl+Q - Quit without saving",
+        "",
+        "Editing:",
+        "  Arrow Keys - Move cursor",
+        "  Ctrl+Left/Right - Move by words",
+        "  Ctrl+A/E - Move to line start/end",
+        "  Backspace/Delete - Delete characters",
+        "",
+        "File Management:",
+        "  Read Daily File - View entire day's journal",
+        "  Edit Today's Journal - Modify today's journal",
+        "  Edit Journal by Date - Select specific date to edit",
+        "  Delete Daily File - Remove entire day (with confirmation)",
+        "  Search Entries - Find entries by title, content, or tags",
+        "",
+        "Settings:",
+        "  Journal Directory - Change storage location",
+        "  Default Editor - Set external editor",
+        "  Date Format - Customize date display",
+        "  Filename Format - Choose naming style",
+        "",
+        "Tips:",
+        "  • Use Ctrl+D to finish writing entries",
+        "  • Search works on titles, content, and tags",
+        "  • Settings are saved automatically",
+        "  • You can edit entire days in terminal or external editor",
+        "  • Tags help organize your entries within each day",
+        "  • Use keyboard shortcuts for quick access",
+        "  • Ctrl+O quickly opens today's journal for editing",
+        "",
+        "Press Enter, Space, or ESC to exit..."
+    ]
+    display_height = height - 2
+    start_line = 0
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "↑/↓ to scroll, Enter/Space/ESC to exit")
+        y_pos = 2
+        for i in range(display_height):
+            line_idx = start_line + i
+            if line_idx < len(tutorial_text):
+                line = tutorial_text[line_idx]
+                if line == "Daily Journal - Terminal Journal Tutorial":
+                    x_pos = max(0, (width - len(line)) // 2)
+                    safe_addstr(stdscr, y_pos, x_pos, line, curses.A_BOLD)
+                else:
+                    safe_addstr(stdscr, y_pos, 0, line)
+                y_pos += 1
+        if start_line > 0:
+            safe_addstr(stdscr, 1, width - 3, "↑")
+        if start_line + display_height < len(tutorial_text):
+            safe_addstr(stdscr, height - 1, width - 3, "↓")
+        stdscr.refresh()
+        key = stdscr.getch()
+        if key == curses.KEY_UP and start_line > 0:
+            start_line -= 1
+        elif key == curses.KEY_DOWN and start_line + display_height < len(tutorial_text):
+            start_line += 1
+        elif key == curses.KEY_PPAGE and start_line > 0:
+            start_line = max(0, start_line - display_height + 2)
+        elif key == curses.KEY_NPAGE and start_line + display_height < len(tutorial_text):
+            start_line = min(len(tutorial_text) - display_height, start_line + display_height - 2)
+        elif key == 27 or key == 10 or key == 32:
             break
 
 def main():
