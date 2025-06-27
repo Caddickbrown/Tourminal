@@ -62,14 +62,59 @@ def ensure_directories():
     os.makedirs(settings["backup_directory"], exist_ok=True)
 
 def create_backup(filename=None):
-    """Create backup of journal files"""
+    """Create backup of journal files, but only if not already backed up this period"""
     settings = get_settings()
     if not settings["auto_backup"]:
         return
-    
     ensure_directories()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+    backup_dir = settings["backup_directory"]
+    freq = settings.get("backup_frequency", "daily")
+    now = datetime.now()
+
+    def backup_needed():
+        # List all backup folders/files
+        try:
+            backups = [f for f in os.listdir(backup_dir) if f.startswith("backup_") or f.endswith(".md")]
+            if not backups:
+                return True
+            # Find the most recent backup timestamp
+            timestamps = []
+            for b in backups:
+                # Try to extract timestamp from name
+                parts = b.split("_")
+                if len(parts) < 2:
+                    continue
+                try:
+                    ts_str = parts[1]
+                    ts = datetime.strptime(ts_str, "%Y%m%d") if len(ts_str) == 8 else None
+                    if not ts and len(ts_str) >= 15:
+                        ts = datetime.strptime(ts_str[:15], "%Y%m%d_%H%M%S")
+                    elif not ts and len(ts_str) >= 8:
+                        ts = datetime.strptime(ts_str[:8], "%Y%m%d")
+                    if ts:
+                        timestamps.append(ts)
+                except Exception:
+                    continue
+            if not timestamps:
+                return True
+            last_backup = max(timestamps)
+            # Check frequency
+            if freq == "daily":
+                return last_backup.date() < now.date()
+            elif freq == "weekly":
+                # ISO week comparison
+                return (last_backup.isocalendar()[0], last_backup.isocalendar()[1]) < (now.isocalendar()[0], now.isocalendar()[1])
+            elif freq == "monthly":
+                return (last_backup.year, last_backup.month) < (now.year, now.month)
+            else:
+                return True
+        except Exception:
+            return True
+
+    if not backup_needed():
+        return
+
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
     if filename:
         # Backup specific file
         src = os.path.join(settings["journal_directory"], filename)
@@ -1184,8 +1229,10 @@ def edit_daily_file(stdscr, filename, content):
                 redraw_editor()
             elif 32 <= key <= 126:
                 current_line = lines[cursor_line]
-                lines[cursor_line] = current_line[:cursor_col] + chr(key) + current_line[cursor_col:]
-                cursor_col += 1
+                lines[cursor_line] = current_line[:cursor_col]
+                lines.insert(cursor_line + 1, current_line[cursor_col:])
+                cursor_line += 1
+                cursor_col = 0
                 modified = True
                 redraw_editor()
                 
@@ -1416,12 +1463,39 @@ def settings_menu(stdscr):
         "",
         "Export Settings",
         "Import Settings",
+        "Open Journal Folder in Finder",
         "",
         "Debug Tools",
         "",
         "Back"
     ]
-    
+
+    def get_status(item):
+        if item == "Auto Backup":
+            return "ON" if settings.get("auto_backup", True) else "OFF"
+        elif item == "Show Word Count":
+            return "ON" if settings.get("show_word_count", True) else "OFF"
+        elif item == "Confirm Delete":
+            return "ON" if settings.get("confirm_delete", True) else "OFF"
+        elif item == "Backup Frequency":
+            return settings.get("backup_frequency", "daily")
+        elif item == "Journal Directory":
+            val = settings.get("journal_directory", "")
+            return os.path.basename(val.rstrip("/")) or val
+        elif item == "Backup Directory":
+            val = settings.get("backup_directory", "")
+            return os.path.basename(val.rstrip("/")) or val
+        elif item == "Default Editor":
+            return settings.get("default_editor", "nano")
+        elif item == "Date Format":
+            return settings.get("date_format", "%Y-%m-%d")
+        else:
+            return None
+
+    # Calculate max label width for alignment
+    label_width = max(len(item) for item in menu if item)
+    status_pad = 4  # spaces between label and status
+
     while True:
         stdscr.clear()
         safe_addstr(stdscr, 0, 0, "Settings")
@@ -1432,12 +1506,17 @@ def settings_menu(stdscr):
             if item == "":
                 y_pos += 1
                 continue
-                
+            status = get_status(item)
+            if status is not None:
+                label = item.ljust(label_width + status_pad)
+                display = f"{label}[{status}]"
+            else:
+                display = item
             try:
                 if idx == current_row:
-                    safe_addstr(stdscr, y_pos, 2, f"> {item}", curses.A_REVERSE)
+                    safe_addstr(stdscr, y_pos, 2, f"> {display}", curses.A_REVERSE)
                 else:
-                    safe_addstr(stdscr, y_pos, 2, f"  {item}")
+                    safe_addstr(stdscr, y_pos, 2, f"  {display}")
             except:
                 pass
             y_pos += 1
@@ -1482,6 +1561,8 @@ def settings_menu(stdscr):
             elif menu[current_row] == "Import Settings":
                 import_settings(stdscr)
                 settings = get_settings()
+            elif menu[current_row] == "Open Journal Folder in Finder":
+                open_journal_folder_in_finder(stdscr)
             elif menu[current_row] == "Debug Tools":
                 debug_tools_menu(stdscr)
             elif menu[current_row] == "Back":
@@ -1946,6 +2027,27 @@ def debug_tools_menu(stdscr):
                 break
         elif key == 27:  # ESC
             break
+
+def open_journal_folder_in_finder(stdscr):
+    """Open the journal directory in Finder (macOS), Explorer (Windows), or file manager (Linux)"""
+    import platform
+    settings = get_settings()
+    folder = settings["journal_directory"]
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, f"Opening folder: {folder}")
+    stdscr.refresh()
+    try:
+        if platform.system() == "Darwin":
+            subprocess.Popen(["open", folder])
+        elif platform.system() == "Windows":
+            subprocess.Popen(["explorer", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+        safe_addstr(stdscr, 2, 0, "Opened folder in file explorer.")
+    except Exception as e:
+        safe_addstr(stdscr, 2, 0, f"Failed to open folder: {e}")
+    safe_addstr(stdscr, 4, 0, "Press any key to continue...")
+    stdscr.getch()
 
 def debug_journal_info(stdscr):
     settings = get_settings()
