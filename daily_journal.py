@@ -18,6 +18,35 @@ DEFAULT_SETTINGS = {
     "auto_save": True
 }
 
+def safe_addstr(stdscr, y, x, text, *args):
+    """Safely add string to screen, truncating if it would exceed boundaries"""
+    try:
+        height, width = stdscr.getmaxyx()
+        # Check if y position is within bounds
+        if y >= height:
+            return False
+        
+        # Truncate text if it would exceed the right boundary
+        max_length = width - x - 1  # Leave 1 character margin
+        if max_length <= 0:
+            return False
+        
+        if len(text) > max_length:
+            text = text[:max_length-3] + "..."
+        
+        stdscr.addstr(y, x, text, *args)
+        return True
+    except curses.error:
+        # If we still get an error, try to write as much as possible
+        try:
+            height, width = stdscr.getmaxyx()
+            if y < height and x < width:
+                # Write just one character to avoid the error
+                stdscr.addstr(y, x, " ")
+        except:
+            pass
+        return False
+
 def load_settings():
     """Load settings from file"""
     try:
@@ -108,14 +137,14 @@ def append_to_daily_file(filename, entry_content):
 def debug_key_codes(stdscr):
     """Debug function to identify key codes"""
     stdscr.clear()
-    stdscr.addstr(0, 0, "Press keys to see their codes (ESC to exit):")
-    stdscr.addstr(2, 0, "Key Code:")
+    safe_addstr(stdscr, 0, 0, "Press keys to see their codes (ESC to exit):")
+    safe_addstr(stdscr, 2, 0, "Key Code:")
     
     while True:
         key = stdscr.getch()
         if key == 27:  # ESC
             break
-        stdscr.addstr(2, 10, f"{key} (0x{key:02x})")
+        safe_addstr(stdscr, 2, 10, f"{key} (0x{key:02x})")
         stdscr.refresh()
 
 def is_enter_key(key):
@@ -133,8 +162,8 @@ def write_in_terminal(stdscr, title, tags):
     
     # Clear the screen and show header
     stdscr.clear()
-    stdscr.addstr(0, 0, f"Writing: {title}")
-    stdscr.addstr(1, 0, "Start typing your entry (Ctrl+D when finished):")
+    safe_addstr(stdscr, 0, 0, f"Writing: {title}")
+    safe_addstr(stdscr, 1, 0, "Start typing your entry (Ctrl+D when finished, ESC to cancel):")
     
     # Get the content
     content_lines = []
@@ -148,10 +177,50 @@ def write_in_terminal(stdscr, title, tags):
         stdscr.move(y_pos, 0)
         stdscr.clrtoeol()
         # Redraw the line
-        stdscr.addstr(y_pos, 0, current_line)
+        safe_addstr(stdscr, y_pos, 0, current_line)
         # Position cursor at the correct position
         stdscr.move(y_pos, x_pos)
         stdscr.refresh()
+    
+    def is_word_char(char):
+        """Check if character is part of a word"""
+        return char.isalnum() or char == '_'
+    
+    def find_word_start(line, col):
+        """Find the start of the word at or before the given column"""
+        if col == 0:
+            return 0
+        if col >= len(line):
+            col = len(line) - 1
+        
+        # If we're in the middle of a word, find its start
+        if is_word_char(line[col]):
+            while col > 0 and is_word_char(line[col - 1]):
+                col -= 1
+            return col
+        else:
+            # Find the previous word
+            while col > 0 and not is_word_char(line[col - 1]):
+                col -= 1
+            while col > 0 and is_word_char(line[col - 1]):
+                col -= 1
+            return col
+    
+    def find_word_end(line, col):
+        """Find the end of the word at or after the given column"""
+        if col >= len(line):
+            return len(line)
+        
+        # If we're in the middle of a word, find its end
+        if is_word_char(line[col]):
+            while col < len(line) and is_word_char(line[col]):
+                col += 1
+            return col
+        else:
+            # Find the next word
+            while col < len(line) and not is_word_char(line[col]):
+                col += 1
+            return col
     
     # Initial cursor position
     stdscr.move(y_pos, x_pos)
@@ -165,13 +234,16 @@ def write_in_terminal(stdscr, title, tags):
                 if current_line:
                     content_lines.append(current_line)
                 break
+            elif char == 27:  # ESC
+                # Cancel writing
+                return None
             elif is_enter_key(char):  # Enter (regular or numpad)
                 content_lines.append(current_line)
                 current_line = ""
                 y_pos += 1
                 x_pos = 0
                 redraw_current_line()
-            elif char == 127 or char == 8:  # Backspace
+            elif char in (127, 8, 263):  # Backspace (Windows: 127, 8, Linux: 263)
                 if x_pos > 0:
                     x_pos -= 1
                     current_line = current_line[:x_pos] + current_line[x_pos+1:]
@@ -186,6 +258,29 @@ def write_in_terminal(stdscr, title, tags):
                     x_pos += 1
                     stdscr.move(y_pos, x_pos)
                     stdscr.refresh()
+            elif char == 550:  # Ctrl+Left (Linux)
+                if x_pos > 0:
+                    x_pos = find_word_start(current_line, x_pos)
+                    stdscr.move(y_pos, x_pos)
+                    stdscr.refresh()
+            elif char == 565:  # Ctrl+Right (Linux)
+                if x_pos < len(current_line):
+                    x_pos = find_word_end(current_line, x_pos)
+                    stdscr.move(y_pos, x_pos)
+                    stdscr.refresh()
+            elif char == 548:  # Alt+Left (Linux)
+                if x_pos > 0:
+                    x_pos = find_word_start(current_line, x_pos)
+                    stdscr.move(y_pos, x_pos)
+                    stdscr.refresh()
+            elif char == 1:  # Ctrl+A (go to start of line)
+                x_pos = 0
+                stdscr.move(y_pos, x_pos)
+                stdscr.refresh()
+            elif char == 5:  # Ctrl+E (go to end of line)
+                x_pos = len(current_line)
+                stdscr.move(y_pos, x_pos)
+                stdscr.refresh()
             else:
                 # Only add printable characters
                 if 32 <= char <= 126:
@@ -209,7 +304,10 @@ def input_with_prefill(stdscr, y, x, prefill):
         """Redraw the entire buffer and position cursor"""
         win.move(y, x)
         win.clrtoeol()
-        win.addstr(y, x, ''.join(buffer))
+        try:
+            win.addstr(y, x, ''.join(buffer))
+        except curses.error:
+            pass
         win.move(y, x + pos)
         win.refresh()
     
@@ -231,7 +329,7 @@ def input_with_prefill(stdscr, y, x, prefill):
             if pos < len(buffer):
                 pos += 1
                 win.move(y, x + pos)
-        elif key in (curses.KEY_BACKSPACE, 127, 8):
+        elif key in (curses.KEY_BACKSPACE, 127, 8, 263):  # Backspace (Windows: 127, 8, Linux: 263)
             if pos > 0:
                 del buffer[pos-1]
                 pos -= 1
@@ -263,12 +361,12 @@ def new_entry(stdscr, use_editor=False):
     current_datetime = datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
     default_title = f"{current_datetime}"
     
-    stdscr.addstr(0, 0, "Title: ")
+    safe_addstr(stdscr, 0, 0, "Title: ")
     title = input_with_prefill(stdscr, 0, 13, default_title)
     if not title.strip():  # If user just presses enter, use default
         title = default_title
     
-    stdscr.addstr(1, 0, "Tags (comma separated): ")
+    safe_addstr(stdscr, 1, 0, "Tags (comma separated): ")
     tags = input_with_prefill(stdscr, 1, 25, "")
     curses.noecho()
 
@@ -280,7 +378,7 @@ def new_entry(stdscr, use_editor=False):
         entry_content = f"# {title}\n\ntags: {tags}\n\n"
         append_to_daily_file(today_file, entry_content)
         
-        stdscr.addstr(3, 0, "Press any key to open editor...")
+        safe_addstr(stdscr, 3, 0, "Press any key to open editor...")
         stdscr.getch()
         curses.endwin()
         
@@ -296,6 +394,10 @@ def new_entry(stdscr, use_editor=False):
         # Write content in terminal
         content = write_in_terminal(stdscr, title, tags)
         
+        # Check if user cancelled
+        if content is None:
+            return
+        
         # Create the entry content
         entry_content = f"# {title}\n\ntags: {tags}\n\n{content}\n"
         
@@ -305,8 +407,8 @@ def new_entry(stdscr, use_editor=False):
         # Show success message with countdown
         for i in range(5, 0, -1):
             stdscr.clear()
-            stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-            stdscr.addstr(2, 0, f"Continuing in {i} seconds... (Press any key to continue now)")
+            safe_addstr(stdscr, 0, 0, f"Entry added to: {today_file}")
+            safe_addstr(stdscr, 2, 0, f"Continuing in {i} seconds... (Press any key to continue now)")
             stdscr.refresh()
             
             # Check for key press with timeout
@@ -331,9 +433,9 @@ def display_daily_content(stdscr, filename, content):
     # Debug: Show content info
     if not content.strip():
         stdscr.clear()
-        stdscr.addstr(0, 0, f"File: {filename}")
-        stdscr.addstr(1, 0, "This file appears to be empty.")
-        stdscr.addstr(3, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"File: {filename}")
+        safe_addstr(stdscr, 1, 0, "This file appears to be empty.")
+        safe_addstr(stdscr, 3, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
@@ -342,21 +444,32 @@ def display_daily_content(stdscr, filename, content):
     content_width = width - 4
     content_win = curses.newwin(content_height, content_width, 2, 2)
     content_win.box()
-    content_win.addstr(0, 2, f" {filename} ")
+    
+    # Safe addstr for window
+    try:
+        content_win.addstr(0, 2, f" {filename} ")
+    except curses.error:
+        pass
     
     # Enable keypad for special keys
     content_win.keypad(True)
     
     # Display instructions
-    content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+    try:
+        content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+    except curses.error:
+        pass
     
     # Display content starting from line 2
     start_line = 0
     while True:
         content_win.clear()
         content_win.box()
-        content_win.addstr(0, 2, f" {filename} ")
-        content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+        try:
+            content_win.addstr(0, 2, f" {filename} ")
+            content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+        except curses.error:
+            pass
         
         # Display visible lines
         for i in range(content_height - 2):
@@ -365,13 +478,22 @@ def display_daily_content(stdscr, filename, content):
                 # Truncate line if too long
                 if len(line) > content_width - 2:
                     line = line[:content_width - 5] + "..."
-                content_win.addstr(i + 2, 1, line)
+                try:
+                    content_win.addstr(i + 2, 1, line)
+                except curses.error:
+                    pass
         
         # Show scroll indicator
         if start_line > 0:
-            content_win.addstr(1, content_width - 3, "↑")
+            try:
+                content_win.addstr(1, content_width - 3, "↑")
+            except curses.error:
+                pass
         if start_line + content_height - 2 < len(lines):
-            content_win.addstr(content_height - 1, content_width - 3, "↓")
+            try:
+                content_win.addstr(content_height - 1, content_width - 3, "↓")
+            except curses.error:
+                pass
         
         # Refresh the content window
         content_win.refresh()
@@ -409,8 +531,11 @@ def edit_daily_file(stdscr, filename, content):
     edit_width = width - 4
     edit_win = curses.newwin(edit_height, edit_width, 2, 2)
     edit_win.box()
-    edit_win.addstr(0, 2, f" Editing: {filename} ")
-    edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving")
+    try:
+        edit_win.addstr(0, 2, f" Editing: {filename} ")
+        edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving, ESC to exit")
+    except curses.error:
+        pass
     
     # Enable keypad for special keys
     edit_win.keypad(True)
@@ -468,8 +593,11 @@ def edit_daily_file(stdscr, filename, content):
         """Redraw the entire editor content"""
         edit_win.clear()
         edit_win.box()
-        edit_win.addstr(0, 2, f" Editing: {filename} ")
-        edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving")
+        try:
+            edit_win.addstr(0, 2, f" Editing: {filename} ")
+            edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving, ESC to exit")
+        except curses.error:
+            pass
         
         # Display visible lines
         for i in range(edit_height - 2):
@@ -479,12 +607,18 @@ def edit_daily_file(stdscr, filename, content):
                 # Truncate line if too long
                 if len(line) > edit_width - 2:
                     line = line[:edit_width - 5] + "..."
-                edit_win.addstr(i + 2, 1, line)
+                try:
+                    edit_win.addstr(i + 2, 1, line)
+                except curses.error:
+                    pass
         
         # Position cursor
         cursor_display_line = cursor_line - display_start + 2
         if 2 <= cursor_display_line < edit_height:
-            edit_win.move(cursor_display_line, min(cursor_col + 1, edit_width - 2))
+            try:
+                edit_win.move(cursor_display_line, min(cursor_col + 1, edit_width - 2))
+            except curses.error:
+                pass
         
         edit_win.refresh()
     
@@ -500,6 +634,9 @@ def edit_daily_file(stdscr, filename, content):
                 break
             elif key == 17:  # Ctrl+Q
                 # Quit without saving
+                break
+            elif key == 27:  # ESC
+                # Exit editor
                 break
             elif key == curses.KEY_UP:
                 if cursor_line > 0:
@@ -525,15 +662,17 @@ def edit_daily_file(stdscr, filename, content):
                 if cursor_col < len(lines[cursor_line]):
                     cursor_col += 1
                     redraw_editor()
-            elif key == 23:  # Ctrl+W (word navigation)
-                # Move to previous word
+            elif key == 550:  # Ctrl+Left (Linux)
                 if cursor_col > 0:
                     cursor_col = find_word_start(lines[cursor_line], cursor_col)
                     redraw_editor()
-            elif key == 24:  # Ctrl+X (word navigation)
-                # Move to next word
+            elif key == 565:  # Ctrl+Right (Linux)
                 if cursor_col < len(lines[cursor_line]):
                     cursor_col = find_word_end(lines[cursor_line], cursor_col)
+                    redraw_editor()
+            elif key == 548:  # Alt+Left (Linux)
+                if cursor_col > 0:
+                    cursor_col = find_word_start(lines[cursor_line], cursor_col)
                     redraw_editor()
             elif key == 1:  # Ctrl+A (line navigation)
                 # Move to start of line
@@ -543,7 +682,7 @@ def edit_daily_file(stdscr, filename, content):
                 # Move to end of line
                 cursor_col = len(lines[cursor_line])
                 redraw_editor()
-            elif key in (curses.KEY_BACKSPACE, 127, 8):
+            elif key in (curses.KEY_BACKSPACE, 127, 8, 263):  # Backspace (Windows: 127, 8, Linux: 263)
                 if cursor_col > 0:
                     # Delete character before cursor
                     lines[cursor_line] = lines[cursor_line][:cursor_col-1] + lines[cursor_line][cursor_col:]
@@ -597,24 +736,24 @@ def select_daily_file(stdscr, action):
     files = get_daily_files()
     if not files:
         stdscr.clear()
-        stdscr.addstr(0, 0, "No daily journal files found.")
+        safe_addstr(stdscr, 0, 0, "No daily journal files found.")
         settings = get_settings()
-        stdscr.addstr(1, 0, f"Journal directory: {settings['journal_directory']}")
-        stdscr.addstr(2, 0, "Try creating a new entry first to create a journal file.")
-        stdscr.addstr(4, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 1, 0, f"Journal directory: {settings['journal_directory']}")
+        safe_addstr(stdscr, 2, 0, "Try creating a new entry first to create a journal file.")
+        safe_addstr(stdscr, 4, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"{action} Daily Journal (ESC to cancel):")
-        stdscr.addstr(1, 0, f"Found {len(files)} journal file(s)")
+        safe_addstr(stdscr, 0, 0, f"{action} Daily Journal (ESC to cancel):")
+        safe_addstr(stdscr, 1, 0, f"Found {len(files)} journal file(s)")
         for i, filename in enumerate(files):
             if i == idx:
-                stdscr.addstr(i+3, 2, f"> {filename}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+3, 2, f"> {filename}", curses.A_REVERSE)
             else:
-                stdscr.addstr(i+3, 2, f"  {filename}")
+                safe_addstr(stdscr, i+3, 2, f"  {filename}")
         key = stdscr.getch()
         if key == curses.KEY_UP:
             if idx > 0:
@@ -643,22 +782,22 @@ def delete_daily_file(stdscr):
     """Delete a daily journal file"""
     files = get_daily_files()
     if not files:
-        stdscr.addstr(0, 0, "No daily journal files found. Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, "No daily journal files found. Press any key to continue...")
         stdscr.getch()
         return
     
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, "Delete Daily Journal (ESC to cancel):")
+        safe_addstr(stdscr, 0, 0, "Delete Daily Journal (ESC to cancel):")
         # Red warning message
-        stdscr.addstr(1, 0, "⚠️  DANGER: This will delete the entire day's journal!", curses.color_pair(1) | curses.A_BOLD)
-        stdscr.addstr(2, 0, "⚠️  WARNING: This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
+        safe_addstr(stdscr, 1, 0, "⚠️  DANGER: This will delete the entire day's journal!", curses.color_pair(1) | curses.A_BOLD)
+        safe_addstr(stdscr, 2, 0, "⚠️  WARNING: This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
         for i, filename in enumerate(files):
             if i == idx:
-                stdscr.addstr(i+4, 2, f"> {filename}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+4, 2, f"> {filename}", curses.A_REVERSE)
             else:
-                stdscr.addstr(i+4, 2, f"  {filename}")
+                safe_addstr(stdscr, i+4, 2, f"  {filename}")
         key = stdscr.getch()
         if key == curses.KEY_UP:
             if idx > 0:
@@ -676,10 +815,10 @@ def delete_daily_file(stdscr):
             filename = files[idx]
             # Confirm deletion with red warning
             stdscr.clear()
-            stdscr.addstr(0, 0, f"⚠️  FINAL WARNING: Delete {filename}?", curses.color_pair(1) | curses.A_BOLD)
-            stdscr.addstr(2, 0, "⚠️  This will permanently delete the entire day's journal!", curses.color_pair(1) | curses.A_BOLD)
-            stdscr.addstr(3, 0, "⚠️  This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
-            stdscr.addstr(5, 0, "Press 'y' to confirm deletion, any other key to cancel: ")
+            safe_addstr(stdscr, 0, 0, f"⚠️  FINAL WARNING: Delete {filename}?", curses.color_pair(1) | curses.A_BOLD)
+            safe_addstr(stdscr, 2, 0, "⚠️  This will permanently delete the entire day's journal!", curses.color_pair(1) | curses.A_BOLD)
+            safe_addstr(stdscr, 3, 0, "⚠️  This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
+            safe_addstr(stdscr, 5, 0, "Press 'y' to confirm deletion, any other key to cancel: ")
             stdscr.refresh()
             
             confirm = stdscr.getch()
@@ -689,13 +828,13 @@ def delete_daily_file(stdscr):
                 try:
                     os.remove(filepath)
                     stdscr.clear()
-                    stdscr.addstr(0, 0, f"✅ Deleted: {filename}")
-                    stdscr.addstr(2, 0, "Press any key to continue...")
+                    safe_addstr(stdscr, 0, 0, f"✅ Deleted: {filename}")
+                    safe_addstr(stdscr, 2, 0, "Press any key to continue...")
                     stdscr.getch()
                 except Exception as e:
                     stdscr.clear()
-                    stdscr.addstr(0, 0, f"❌ Error deleting file: {e}", curses.color_pair(1))
-                    stdscr.addstr(2, 0, "Press any key to continue...")
+                    safe_addstr(stdscr, 0, 0, f"❌ Error deleting file: {e}", curses.color_pair(1))
+                    safe_addstr(stdscr, 2, 0, "Press any key to continue...")
                     stdscr.getch()
             break
         elif key == 27:  # ESC
@@ -714,6 +853,7 @@ def settings_menu(stdscr):
         "",
         "Debug Journal Info",
         "Debug Parse Entries",
+        "Debug Keyboard Keys",
         "Create Test File",
         "",
         "Tutorial",
@@ -723,8 +863,8 @@ def settings_menu(stdscr):
     
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, "Settings")
-        stdscr.addstr(1, 0, "Configure Daily Journal")
+        safe_addstr(stdscr, 0, 0, "Settings")
+        safe_addstr(stdscr, 1, 0, "Configure Daily Journal")
         
         y_pos = 3
         for idx, item in enumerate(menu):
@@ -733,9 +873,9 @@ def settings_menu(stdscr):
                 continue
                 
             if idx == current_row:
-                stdscr.addstr(y_pos, 2, f"> {item}", curses.A_REVERSE)
+                safe_addstr(stdscr, y_pos, 2, f"> {item}", curses.A_REVERSE)
             else:
-                stdscr.addstr(y_pos, 2, f"  {item}")
+                safe_addstr(stdscr, y_pos, 2, f"  {item}")
             y_pos += 1
         
         key = stdscr.getch()
@@ -774,6 +914,8 @@ def settings_menu(stdscr):
                 debug_journal_info(stdscr)
             elif menu[current_row] == "Debug Parse Entries":
                 debug_parse_entries(stdscr)
+            elif menu[current_row] == "Debug Keyboard Keys":
+                debug_keyboard_keys(stdscr)
             elif menu[current_row] == "Create Test File":
                 create_test_file(stdscr)
             elif menu[current_row] == "Tutorial":
@@ -787,45 +929,45 @@ def show_journal_directory(stdscr):
     """Show and edit journal directory setting"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Journal Directory")
-    stdscr.addstr(2, 0, f"Current: {settings['journal_directory']}")
-    stdscr.addstr(4, 0, "Press any key to continue...")
+    safe_addstr(stdscr, 0, 0, "Journal Directory")
+    safe_addstr(stdscr, 2, 0, f"Current: {settings['journal_directory']}")
+    safe_addstr(stdscr, 4, 0, "Press any key to continue...")
     stdscr.getch()
 
 def show_default_editor(stdscr):
     """Show and edit default editor setting"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Default Editor")
-    stdscr.addstr(2, 0, f"Current: {settings['default_editor']}")
-    stdscr.addstr(4, 0, "Press any key to continue...")
+    safe_addstr(stdscr, 0, 0, "Default Editor")
+    safe_addstr(stdscr, 2, 0, f"Current: {settings['default_editor']}")
+    safe_addstr(stdscr, 4, 0, "Press any key to continue...")
     stdscr.getch()
 
 def show_date_format(stdscr):
     """Show and edit date format setting"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Date Format")
-    stdscr.addstr(2, 0, f"Current: {settings['date_format']}")
-    stdscr.addstr(4, 0, "Press any key to continue...")
+    safe_addstr(stdscr, 0, 0, "Date Format")
+    safe_addstr(stdscr, 2, 0, f"Current: {settings['date_format']}")
+    safe_addstr(stdscr, 4, 0, "Press any key to continue...")
     stdscr.getch()
 
 def show_filename_format(stdscr):
     """Show and edit filename format setting"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Filename Format")
-    stdscr.addstr(2, 0, f"Current: {settings['filename_format']}")
-    stdscr.addstr(4, 0, "Press any key to continue...")
+    safe_addstr(stdscr, 0, 0, "Filename Format")
+    safe_addstr(stdscr, 2, 0, f"Current: {settings['filename_format']}")
+    safe_addstr(stdscr, 4, 0, "Press any key to continue...")
     stdscr.getch()
 
 def show_auto_save(stdscr):
     """Show and edit auto save setting"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Auto Save")
-    stdscr.addstr(2, 0, f"Current: {settings['auto_save']}")
-    stdscr.addstr(4, 0, "Press any key to continue...")
+    safe_addstr(stdscr, 0, 0, "Auto Save")
+    safe_addstr(stdscr, 2, 0, f"Current: {settings['auto_save']}")
+    safe_addstr(stdscr, 4, 0, "Press any key to continue...")
     stdscr.getch()
 
 def show_tutorial(stdscr):
@@ -897,7 +1039,7 @@ def show_tutorial(stdscr):
         stdscr.clear()
         
         # Show instructions
-        stdscr.addstr(0, 0, "↑/↓ to scroll, Enter/Space/ESC to exit")
+        safe_addstr(stdscr, 0, 0, "↑/↓ to scroll, Enter/Space/ESC to exit")
         
         # Display visible lines
         y_pos = 2
@@ -909,16 +1051,16 @@ def show_tutorial(stdscr):
                 # Center the title
                 if line == "Daily Journal - Terminal Journal Tutorial":
                     x_pos = max(0, (width - len(line)) // 2)
-                    stdscr.addstr(y_pos, x_pos, line, curses.A_BOLD)
+                    safe_addstr(stdscr, y_pos, x_pos, line, curses.A_BOLD)
                 else:
-                    stdscr.addstr(y_pos, 0, line)
+                    safe_addstr(stdscr, y_pos, 0, line)
                 y_pos += 1
         
         # Show scroll indicators
         if start_line > 0:
-            stdscr.addstr(1, width - 3, "↑")
+            safe_addstr(stdscr, 1, width - 3, "↑")
         if start_line + display_height < len(tutorial_text):
-            stdscr.addstr(height - 1, width - 3, "↓")
+            safe_addstr(stdscr, height - 1, width - 3, "↓")
         
         stdscr.refresh()
         
@@ -940,15 +1082,15 @@ def search_entries(stdscr):
     """Search through daily journal entries"""
     files = get_daily_files()
     if not files:
-        stdscr.addstr(0, 0, "No daily journal files found. Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, "No daily journal files found. Press any key to continue...")
         stdscr.getch()
         return
     
     # Get search term
     curses.echo()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Search Daily Journal Entries")
-    stdscr.addstr(2, 0, "Enter search term: ")
+    safe_addstr(stdscr, 0, 0, "Search Daily Journal Entries")
+    safe_addstr(stdscr, 2, 0, "Enter search term: ")
     search_term = stdscr.getstr(2, 25).decode().lower()
     curses.noecho()
     
@@ -964,8 +1106,8 @@ def search_entries(stdscr):
     
     if not matching_entries:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"No daily journal files found matching '{search_term}'")
-        stdscr.addstr(2, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"No daily journal files found matching '{search_term}'")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
@@ -973,14 +1115,14 @@ def search_entries(stdscr):
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"Search Results for '{search_term}' ({len(matching_entries)} found)")
-        stdscr.addstr(1, 0, "Use arrow keys to navigate, Enter/Space to read, ESC to go back")
+        safe_addstr(stdscr, 0, 0, f"Search Results for '{search_term}' ({len(matching_entries)} found)")
+        safe_addstr(stdscr, 1, 0, "Use arrow keys to navigate, Enter/Space to read, ESC to go back")
         
         for i, (filename, match_type) in enumerate(matching_entries):
             if i == idx:
-                stdscr.addstr(i+3, 2, f"> {filename} ({match_type})", curses.A_REVERSE)
+                safe_addstr(stdscr, i+3, 2, f"> {filename} ({match_type})", curses.A_REVERSE)
             else:
-                stdscr.addstr(i+3, 2, f"  {filename} ({match_type})")
+                safe_addstr(stdscr, i+3, 2, f"  {filename} ({match_type})")
         
         key = stdscr.getch()
         if key == curses.KEY_UP:
@@ -1007,19 +1149,19 @@ def select_date_to_edit(stdscr):
     """Select a specific date to edit in terminal"""
     files = get_daily_files()
     if not files:
-        stdscr.addstr(0, 0, "No daily journal files found. Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, "No daily journal files found. Press any key to continue...")
         stdscr.getch()
         return
     
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, "Select Date to Edit (Terminal) (ESC to cancel):")
+        safe_addstr(stdscr, 0, 0, "Select Date to Edit (Terminal) (ESC to cancel):")
         for i, filename in enumerate(files):
             if i == idx:
-                stdscr.addstr(i+2, 2, f"> {filename}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+2, 2, f"> {filename}", curses.A_REVERSE)
             else:
-                stdscr.addstr(i+2, 2, f"  {filename}")
+                safe_addstr(stdscr, i+2, 2, f"  {filename}")
         key = stdscr.getch()
         if key == curses.KEY_UP:
             if idx > 0:
@@ -1045,34 +1187,34 @@ def debug_journal_info(stdscr):
     """Debug function to show journal directory information"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Journal Debug Information")
-    stdscr.addstr(2, 0, f"Journal Directory: {settings['journal_directory']}")
+    safe_addstr(stdscr, 0, 0, "Journal Debug Information")
+    safe_addstr(stdscr, 2, 0, f"Journal Directory: {settings['journal_directory']}")
     
     # Check if directory exists
     if os.path.exists(settings["journal_directory"]):
-        stdscr.addstr(3, 0, "✓ Journal directory exists")
+        safe_addstr(stdscr, 3, 0, "✓ Journal directory exists")
         
         # List all files in directory
         try:
             all_files = os.listdir(settings["journal_directory"])
-            stdscr.addstr(4, 0, f"All files in directory ({len(all_files)}):")
+            safe_addstr(stdscr, 4, 0, f"All files in directory ({len(all_files)}):")
             for i, file in enumerate(all_files[:10]):  # Show first 10 files
-                stdscr.addstr(5 + i, 2, f"  {file}")
+                safe_addstr(stdscr, 5 + i, 2, f"  {file}")
             if len(all_files) > 10:
-                stdscr.addstr(15, 2, f"  ... and {len(all_files) - 10} more files")
+                safe_addstr(stdscr, 15, 2, f"  ... and {len(all_files) - 10} more files")
             
             # Show .md files specifically
             md_files = [f for f in all_files if f.endswith('.md')]
-            stdscr.addstr(17, 0, f"Markdown files ({len(md_files)}):")
+            safe_addstr(stdscr, 17, 0, f"Markdown files ({len(md_files)}):")
             for i, file in enumerate(md_files):
-                stdscr.addstr(18 + i, 2, f"  {file}")
+                safe_addstr(stdscr, 18 + i, 2, f"  {file}")
                 
         except Exception as e:
-            stdscr.addstr(4, 0, f"Error listing directory: {e}")
+            safe_addstr(stdscr, 4, 0, f"Error listing directory: {e}")
     else:
-        stdscr.addstr(3, 0, "✗ Journal directory does not exist")
+        safe_addstr(stdscr, 3, 0, "✗ Journal directory does not exist")
     
-    stdscr.addstr(25, 0, "Press any key to continue...")
+    safe_addstr(stdscr, 25, 0, "Press any key to continue...")
     stdscr.getch()
 
 def create_test_file(stdscr):
@@ -1106,15 +1248,15 @@ This should be visible when reading the file.
             f.write(test_content)
         
         stdscr.clear()
-        stdscr.addstr(0, 0, "Test file created successfully!")
-        stdscr.addstr(1, 0, f"File: {filepath}")
-        stdscr.addstr(3, 0, "You can now try 'Read Daily File' to test the reading functionality.")
-        stdscr.addstr(5, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, "Test file created successfully!")
+        safe_addstr(stdscr, 1, 0, f"File: {filepath}")
+        safe_addstr(stdscr, 3, 0, "You can now try 'Read Daily File' to test the reading functionality.")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
         stdscr.getch()
     except Exception as e:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"Error creating test file: {e}")
-        stdscr.addstr(2, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"Error creating test file: {e}")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
         stdscr.getch()
 
 def parse_entries_from_content(content, filename):
@@ -1208,25 +1350,25 @@ def select_entry(stdscr, action):
     entries = get_all_entries()
     if not entries:
         stdscr.clear()
-        stdscr.addstr(0, 0, "No journal entries found.")
+        safe_addstr(stdscr, 0, 0, "No journal entries found.")
         settings = get_settings()
-        stdscr.addstr(1, 0, f"Journal directory: {settings['journal_directory']}")
-        stdscr.addstr(2, 0, "Try creating a new entry first to create a journal entry.")
-        stdscr.addstr(4, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 1, 0, f"Journal directory: {settings['journal_directory']}")
+        safe_addstr(stdscr, 2, 0, "Try creating a new entry first to create a journal entry.")
+        safe_addstr(stdscr, 4, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"{action} Journal Entry (ESC to cancel):")
-        stdscr.addstr(1, 0, f"Found {len(entries)} journal entry(ies)")
+        safe_addstr(stdscr, 0, 0, f"{action} Journal Entry (ESC to cancel):")
+        safe_addstr(stdscr, 1, 0, f"Found {len(entries)} journal entry(ies)")
         for i, entry in enumerate(entries):
             display_name = get_entry_display_name(entry)
             if i == idx:
-                stdscr.addstr(i+3, 2, f"> {display_name}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+3, 2, f"> {display_name}", curses.A_REVERSE)
             else:
-                stdscr.addstr(i+3, 2, f"  {display_name}")
+                safe_addstr(stdscr, i+3, 2, f"  {display_name}")
         key = stdscr.getch()
         if key == curses.KEY_UP:
             if idx > 0:
@@ -1269,9 +1411,9 @@ def display_entry_content(stdscr, entry):
     # Debug: Show content info
     if not full_content.strip():
         stdscr.clear()
-        stdscr.addstr(0, 0, f"Entry: {entry['title']}")
-        stdscr.addstr(1, 0, "This entry appears to be empty.")
-        stdscr.addstr(3, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"Entry: {entry['title']}")
+        safe_addstr(stdscr, 1, 0, "This entry appears to be empty.")
+        safe_addstr(stdscr, 3, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
@@ -1280,21 +1422,30 @@ def display_entry_content(stdscr, entry):
     content_width = width - 4
     content_win = curses.newwin(content_height, content_width, 2, 2)
     content_win.box()
-    content_win.addstr(0, 2, f" {entry['title']} ")
+    try:
+        content_win.addstr(0, 2, f" {entry['title']} ")
+    except curses.error:
+        pass
     
     # Enable keypad for special keys
     content_win.keypad(True)
     
     # Display instructions
-    content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+    try:
+        content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+    except curses.error:
+        pass
     
     # Display content starting from line 2
     start_line = 0
     while True:
         content_win.clear()
         content_win.box()
-        content_win.addstr(0, 2, f" {entry['title']} ")
-        content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+        try:
+            content_win.addstr(0, 2, f" {entry['title']} ")
+            content_win.addstr(1, 1, "Use arrow keys to scroll, ESC to return")
+        except curses.error:
+            pass
         
         # Display visible lines
         for i in range(content_height - 2):
@@ -1303,13 +1454,22 @@ def display_entry_content(stdscr, entry):
                 # Truncate line if too long
                 if len(line) > content_width - 2:
                     line = line[:content_width - 5] + "..."
-                content_win.addstr(i + 2, 1, line)
+                try:
+                    content_win.addstr(i + 2, 1, line)
+                except curses.error:
+                    pass
         
         # Show scroll indicator
         if start_line > 0:
-            content_win.addstr(1, content_width - 3, "↑")
+            try:
+                content_win.addstr(1, content_width - 3, "↑")
+            except curses.error:
+                pass
         if start_line + content_height - 2 < len(lines):
-            content_win.addstr(content_height - 1, content_width - 3, "↓")
+            try:
+                content_win.addstr(content_height - 1, content_width - 3, "↓")
+            except curses.error:
+                pass
         
         # Refresh the content window
         content_win.refresh()
@@ -1353,8 +1513,11 @@ def edit_entry(stdscr, entry):
     edit_width = width - 4
     edit_win = curses.newwin(edit_height, edit_width, 2, 2)
     edit_win.box()
-    edit_win.addstr(0, 2, f" Editing: {entry['title']} ")
-    edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving")
+    try:
+        edit_win.addstr(0, 2, f" Editing: {entry['title']} ")
+        edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving")
+    except curses.error:
+        pass
     
     # Enable keypad for special keys
     edit_win.keypad(True)
@@ -1412,8 +1575,11 @@ def edit_entry(stdscr, entry):
         """Redraw the entire editor content"""
         edit_win.clear()
         edit_win.box()
-        edit_win.addstr(0, 2, f" Editing: {entry['title']} ")
-        edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving")
+        try:
+            edit_win.addstr(0, 2, f" Editing: {entry['title']} ")
+            edit_win.addstr(1, 1, "Ctrl+S to save, Ctrl+Q to quit without saving")
+        except curses.error:
+            pass
         
         # Display visible lines
         for i in range(edit_height - 2):
@@ -1423,12 +1589,18 @@ def edit_entry(stdscr, entry):
                 # Truncate line if too long
                 if len(line) > edit_width - 2:
                     line = line[:edit_width - 5] + "..."
-                edit_win.addstr(i + 2, 1, line)
+                try:
+                    edit_win.addstr(i + 2, 1, line)
+                except curses.error:
+                    pass
         
         # Position cursor
         cursor_display_line = cursor_line - display_start + 2
         if 2 <= cursor_display_line < edit_height:
-            edit_win.move(cursor_display_line, min(cursor_col + 1, edit_width - 2))
+            try:
+                edit_win.move(cursor_display_line, min(cursor_col + 1, edit_width - 2))
+            except curses.error:
+                pass
         
         edit_win.refresh()
     
@@ -1444,6 +1616,9 @@ def edit_entry(stdscr, entry):
                 break
             elif key == 17:  # Ctrl+Q
                 # Quit without saving
+                break
+            elif key == 27:  # ESC
+                # Exit editor
                 break
             elif key == curses.KEY_UP:
                 if cursor_line > 0:
@@ -1469,15 +1644,17 @@ def edit_entry(stdscr, entry):
                 if cursor_col < len(lines[cursor_line]):
                     cursor_col += 1
                     redraw_editor()
-            elif key == 23:  # Ctrl+W (word navigation)
-                # Move to previous word
+            elif key == 550:  # Ctrl+Left (Linux)
                 if cursor_col > 0:
                     cursor_col = find_word_start(lines[cursor_line], cursor_col)
                     redraw_editor()
-            elif key == 24:  # Ctrl+X (word navigation)
-                # Move to next word
+            elif key == 565:  # Ctrl+Right (Linux)
                 if cursor_col < len(lines[cursor_line]):
                     cursor_col = find_word_end(lines[cursor_line], cursor_col)
+                    redraw_editor()
+            elif key == 548:  # Alt+Left (Linux)
+                if cursor_col > 0:
+                    cursor_col = find_word_start(lines[cursor_line], cursor_col)
                     redraw_editor()
             elif key == 1:  # Ctrl+A (line navigation)
                 # Move to start of line
@@ -1487,7 +1664,7 @@ def edit_entry(stdscr, entry):
                 # Move to end of line
                 cursor_col = len(lines[cursor_line])
                 redraw_editor()
-            elif key in (curses.KEY_BACKSPACE, 127, 8):
+            elif key in (curses.KEY_BACKSPACE, 127, 8, 263):  # Backspace (Windows: 127, 8, Linux: 263)
                 if cursor_col > 0:
                     # Delete character before cursor
                     lines[cursor_line] = lines[cursor_line][:cursor_col-1] + lines[cursor_line][cursor_col:]
@@ -1539,12 +1716,12 @@ def debug_parse_entries(stdscr):
     """Debug function to show what entries are being parsed"""
     settings = get_settings()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Debug: Entry Parsing")
+    safe_addstr(stdscr, 0, 0, "Debug: Entry Parsing")
     
     files = get_daily_files()
     if not files:
-        stdscr.addstr(2, 0, "No files found")
-        stdscr.addstr(4, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 2, 0, "No files found")
+        safe_addstr(stdscr, 4, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
@@ -1555,22 +1732,22 @@ def debug_parse_entries(stdscr):
         if y_pos >= height - 5:
             break
             
-        stdscr.addstr(y_pos, 0, f"File: {filename}")
+        safe_addstr(stdscr, y_pos, 0, f"File: {filename}")
         y_pos += 1
         
         content = read_daily_file(filename)
-        stdscr.addstr(y_pos, 0, f"Content length: {len(content)}")
+        safe_addstr(stdscr, y_pos, 0, f"Content length: {len(content)}")
         y_pos += 1
         
         # Show first 200 characters of content, truncated to fit screen
         preview = content[:200].replace('\n', '\\n')
         preview = preview[:width-20]  # Leave some margin
-        stdscr.addstr(y_pos, 0, f"Preview: {preview}")
+        safe_addstr(stdscr, y_pos, 0, f"Preview: {preview}")
         y_pos += 2
         
         # Parse entries
         entries = parse_entries_from_content(content, filename)
-        stdscr.addstr(y_pos, 0, f"Parsed {len(entries)} entries:")
+        safe_addstr(stdscr, y_pos, 0, f"Parsed {len(entries)} entries:")
         y_pos += 1
         
         for i, entry in enumerate(entries):
@@ -1579,41 +1756,41 @@ def debug_parse_entries(stdscr):
                 
             # Truncate title to fit screen
             title = entry['title'][:width-15]
-            stdscr.addstr(y_pos, 2, f"Entry {i+1}: {title}")
+            safe_addstr(stdscr, y_pos, 2, f"Entry {i+1}: {title}")
             y_pos += 1
             
             tags = entry['tags'][:width-15] if entry['tags'] else ''
-            stdscr.addstr(y_pos, 4, f"Tags: '{tags}'")
+            safe_addstr(stdscr, y_pos, 4, f"Tags: '{tags}'")
             y_pos += 1
             
-            stdscr.addstr(y_pos, 4, f"Content length: {len(entry['content'])}")
+            safe_addstr(stdscr, y_pos, 4, f"Content length: {len(entry['content'])}")
             y_pos += 1
             
             if entry['content']:
                 content_preview = entry['content'][:50].replace('\n', '\\n')
                 content_preview = content_preview[:width-20]  # Leave margin
-                stdscr.addstr(y_pos, 4, f"Content preview: {content_preview}")
+                safe_addstr(stdscr, y_pos, 4, f"Content preview: {content_preview}")
                 y_pos += 1
             y_pos += 1
         
         y_pos += 1
     
-    stdscr.addstr(height-2, 0, "Press any key to continue...")
+    safe_addstr(stdscr, height-2, 0, "Press any key to continue...")
     stdscr.getch()
 
 def search_individual_entries(stdscr):
     """Search through individual journal entries"""
     entries = get_all_entries()
     if not entries:
-        stdscr.addstr(0, 0, "No journal entries found. Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, "No journal entries found. Press any key to continue...")
         stdscr.getch()
         return
     
     # Get search term
     curses.echo()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Search Individual Journal Entries")
-    stdscr.addstr(2, 0, "Enter search term: ")
+    safe_addstr(stdscr, 0, 0, "Search Individual Journal Entries")
+    safe_addstr(stdscr, 2, 0, "Enter search term: ")
     search_term = stdscr.getstr(2, 30).decode().lower()
     curses.noecho()
     
@@ -1639,8 +1816,8 @@ def search_individual_entries(stdscr):
     
     if not matching_entries:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"No journal entries found matching '{search_term}'")
-        stdscr.addstr(2, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"No journal entries found matching '{search_term}'")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
@@ -1648,17 +1825,17 @@ def search_individual_entries(stdscr):
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"Search Results for '{search_term}' ({len(matching_entries)} found)")
-        stdscr.addstr(1, 0, "Use arrow keys to navigate, Enter/Space to read, ESC to go back")
+        safe_addstr(stdscr, 0, 0, f"Search Results for '{search_term}' ({len(matching_entries)} found)")
+        safe_addstr(stdscr, 1, 0, "Use arrow keys to navigate, Enter/Space to read, ESC to go back")
         
         for i, (entry, match_location) in enumerate(matching_entries):
             display_name = get_entry_display_name(entry)
             if i == idx:
-                stdscr.addstr(i+3, 2, f"> {display_name}", curses.A_REVERSE)
-                stdscr.addstr(i+3, len(display_name)+4, f" (matched in: {match_location})")
+                safe_addstr(stdscr, i+3, 2, f"> {display_name}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+3, len(display_name)+4, f" (matched in: {match_location})")
             else:
-                stdscr.addstr(i+3, 2, f"  {display_name}")
-                stdscr.addstr(i+3, len(display_name)+4, f" (matched in: {match_location})")
+                safe_addstr(stdscr, i+3, 2, f"  {display_name}")
+                safe_addstr(stdscr, i+3, len(display_name)+4, f" (matched in: {match_location})")
         
         key = stdscr.getch()
         if key == curses.KEY_UP:
@@ -1684,15 +1861,15 @@ def search_entries_to_edit(stdscr):
     """Search through individual journal entries and edit them"""
     entries = get_all_entries()
     if not entries:
-        stdscr.addstr(0, 0, "No journal entries found. Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, "No journal entries found. Press any key to continue...")
         stdscr.getch()
         return
     
     # Get search term
     curses.echo()
     stdscr.clear()
-    stdscr.addstr(0, 0, "Search and Edit Journal Entries")
-    stdscr.addstr(2, 0, "Enter search term: ")
+    safe_addstr(stdscr, 0, 0, "Search and Edit Journal Entries")
+    safe_addstr(stdscr, 2, 0, "Enter search term: ")
     search_term = stdscr.getstr(2, 30).decode().lower()
     curses.noecho()
     
@@ -1718,8 +1895,8 @@ def search_entries_to_edit(stdscr):
     
     if not matching_entries:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"No journal entries found matching '{search_term}'")
-        stdscr.addstr(2, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"No journal entries found matching '{search_term}'")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
@@ -1727,17 +1904,17 @@ def search_entries_to_edit(stdscr):
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, f"Search Results for '{search_term}' ({len(matching_entries)} found)")
-        stdscr.addstr(1, 0, "Use arrow keys to navigate, Enter/Space to edit, ESC to go back")
+        safe_addstr(stdscr, 0, 0, f"Search Results for '{search_term}' ({len(matching_entries)} found)")
+        safe_addstr(stdscr, 1, 0, "Use arrow keys to navigate, Enter/Space to edit, ESC to go back")
         
         for i, (entry, match_location) in enumerate(matching_entries):
             display_name = get_entry_display_name(entry)
             if i == idx:
-                stdscr.addstr(i+3, 2, f"> {display_name}", curses.A_REVERSE)
-                stdscr.addstr(i+3, len(display_name)+4, f" (matched in: {match_location})")
+                safe_addstr(stdscr, i+3, 2, f"> {display_name}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+3, len(display_name)+4, f" (matched in: {match_location})")
             else:
-                stdscr.addstr(i+3, 2, f"  {display_name}")
-                stdscr.addstr(i+3, len(display_name)+4, f" (matched in: {match_location})")
+                safe_addstr(stdscr, i+3, 2, f"  {display_name}")
+                safe_addstr(stdscr, i+3, len(display_name)+4, f" (matched in: {match_location})")
         
         key = stdscr.getch()
         if key == curses.KEY_UP:
@@ -1795,8 +1972,8 @@ def main_menu(stdscr):
     
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, "Daily Journal")
-        stdscr.addstr(1, 0, "Terminal Journal Application")
+        safe_addstr(stdscr, 0, 0, "Daily Journal")
+        safe_addstr(stdscr, 1, 0, "Terminal Journal Application")
         
         y_pos = 3
         for idx, item in enumerate(menu):
@@ -1805,9 +1982,9 @@ def main_menu(stdscr):
                 continue
                 
             if idx == current_row:
-                stdscr.addstr(y_pos, 2, f"> {item}", curses.A_REVERSE)
+                safe_addstr(stdscr, y_pos, 2, f"> {item}", curses.A_REVERSE)
             else:
-                stdscr.addstr(y_pos, 2, f"  {item}")
+                safe_addstr(stdscr, y_pos, 2, f"  {item}")
             y_pos += 1
             
         key = stdscr.getch()
@@ -1895,12 +2072,12 @@ def delete_entry(stdscr, entry):
     
     # Confirm deletion with red warning
     stdscr.clear()
-    stdscr.addstr(0, 0, f"⚠️  WARNING: Delete Entry?", curses.color_pair(1) | curses.A_BOLD)
-    stdscr.addstr(1, 0, f"Title: {entry['title']}")
-    stdscr.addstr(2, 0, f"File: {entry['filename']}")
-    stdscr.addstr(4, 0, "⚠️  This will remove this entry from the daily file!", curses.color_pair(1) | curses.A_BOLD)
-    stdscr.addstr(5, 0, "⚠️  This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
-    stdscr.addstr(7, 0, "Press 'y' to confirm deletion, any other key to cancel: ")
+    safe_addstr(stdscr, 0, 0, f"⚠️  WARNING: Delete Entry?", curses.color_pair(1) | curses.A_BOLD)
+    safe_addstr(stdscr, 1, 0, f"Title: {entry['title']}")
+    safe_addstr(stdscr, 2, 0, f"File: {entry['filename']}")
+    safe_addstr(stdscr, 4, 0, "⚠️  This will remove this entry from the daily file!", curses.color_pair(1) | curses.A_BOLD)
+    safe_addstr(stdscr, 5, 0, "⚠️  This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
+    safe_addstr(stdscr, 7, 0, "Press 'y' to confirm deletion, any other key to cancel: ")
     stdscr.refresh()
     
     confirm = stdscr.getch()
@@ -1921,8 +2098,8 @@ def delete_entry(stdscr, entry):
         
         if not target_entry:
             stdscr.clear()
-            stdscr.addstr(0, 0, f"❌ Error: Could not find entry in file", curses.color_pair(1))
-            stdscr.addstr(2, 0, "Press any key to continue...")
+            safe_addstr(stdscr, 0, 0, f"❌ Error: Could not find entry in file", curses.color_pair(1))
+            safe_addstr(stdscr, 2, 0, "Press any key to continue...")
             stdscr.getch()
             return
         
@@ -1962,8 +2139,8 @@ def delete_entry(stdscr, entry):
         write_daily_file(entry['filename'], new_content)
         
         stdscr.clear()
-        stdscr.addstr(0, 0, f"✅ Deleted entry: {entry['title']}")
-        stdscr.addstr(2, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 0, 0, f"✅ Deleted entry: {entry['title']}")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
         stdscr.getch()
 
 def select_entry_to_delete(stdscr):
@@ -1972,28 +2149,28 @@ def select_entry_to_delete(stdscr):
     entries = get_all_entries()
     if not entries:
         stdscr.clear()
-        stdscr.addstr(0, 0, "No journal entries found.")
+        safe_addstr(stdscr, 0, 0, "No journal entries found.")
         settings = get_settings()
-        stdscr.addstr(1, 0, f"Journal directory: {settings['journal_directory']}")
-        stdscr.addstr(2, 0, "Try creating a new entry first to create a journal entry.")
-        stdscr.addstr(4, 0, "Press any key to continue...")
+        safe_addstr(stdscr, 1, 0, f"Journal directory: {settings['journal_directory']}")
+        safe_addstr(stdscr, 2, 0, "Try creating a new entry first to create a journal entry.")
+        safe_addstr(stdscr, 4, 0, "Press any key to continue...")
         stdscr.getch()
         return
     
     idx = 0
     while True:
         stdscr.clear()
-        stdscr.addstr(0, 0, "Delete Journal Entry (ESC to cancel):")
+        safe_addstr(stdscr, 0, 0, "Delete Journal Entry (ESC to cancel):")
         # Red warning message
-        stdscr.addstr(1, 0, "⚠️  DANGER: This will delete the selected entry!", curses.color_pair(1) | curses.A_BOLD)
-        stdscr.addstr(2, 0, "⚠️  WARNING: This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
-        stdscr.addstr(3, 0, f"Found {len(entries)} journal entry(ies)")
+        safe_addstr(stdscr, 1, 0, "⚠️  DANGER: This will delete the selected entry!", curses.color_pair(1) | curses.A_BOLD)
+        safe_addstr(stdscr, 2, 0, "⚠️  WARNING: This action cannot be undone!", curses.color_pair(1) | curses.A_BOLD)
+        safe_addstr(stdscr, 3, 0, f"Found {len(entries)} journal entry(ies)")
         for i, entry in enumerate(entries):
             display_name = get_entry_display_name(entry)
             if i == idx:
-                stdscr.addstr(i+5, 2, f"> {display_name}", curses.A_REVERSE)
+                safe_addstr(stdscr, i+5, 2, f"> {display_name}", curses.A_REVERSE)
             else:
-                stdscr.addstr(i+5, 2, f"  {display_name}")
+                safe_addstr(stdscr, i+5, 2, f"  {display_name}")
         key = stdscr.getch()
         if key == curses.KEY_UP:
             if idx > 0:
@@ -2013,6 +2190,104 @@ def select_entry_to_delete(stdscr):
             break
         elif key == 27:  # ESC
             break
+
+def debug_keyboard_keys(stdscr):
+    """Debug function to identify key codes"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Debug Keyboard Keys")
+    safe_addstr(stdscr, 1, 0, "Press keys to see their codes (ESC to exit)")
+    safe_addstr(stdscr, 3, 0, "Key Code:")
+    safe_addstr(stdscr, 4, 0, "Key Name:")
+    safe_addstr(stdscr, 5, 0, "Hex Code:")
+    safe_addstr(stdscr, 6, 0, "Character:")
+    
+    # Show some common keys for reference
+    safe_addstr(stdscr, 8, 0, "Common Keys Reference:")
+    safe_addstr(stdscr, 9, 0, "  Enter: 10, 13, 459")
+    safe_addstr(stdscr, 10, 0, "  Space: 32")
+    safe_addstr(stdscr, 11, 0, "  ESC: 27")
+    safe_addstr(stdscr, 12, 0, "  Ctrl+N: 14")
+    safe_addstr(stdscr, 13, 0, "  Ctrl+O: 15")
+    safe_addstr(stdscr, 14, 0, "  Ctrl+F: 6")
+    safe_addstr(stdscr, 15, 0, "  Ctrl+S: 19")
+    safe_addstr(stdscr, 16, 0, "  Ctrl+Q: 17")
+    safe_addstr(stdscr, 17, 0, "  Backspace: 127, 8 (Windows), 263 (Linux)")
+    safe_addstr(stdscr, 18, 0, "  Arrow Up: 259")
+    safe_addstr(stdscr, 19, 0, "  Arrow Down: 258")
+    safe_addstr(stdscr, 20, 0, "  Arrow Left: 260")
+    safe_addstr(stdscr, 21, 0, "  Arrow Right: 261")
+    safe_addstr(stdscr, 22, 0, "  Ctrl+Left: 550 (Linux)")
+    safe_addstr(stdscr, 23, 0, "  Ctrl+Right: 565 (Linux)")
+    safe_addstr(stdscr, 24, 0, "  Alt+Left: 548 (Linux)")
+    safe_addstr(stdscr, 25, 0, "  Ctrl+A: 1 (start of line)")
+    safe_addstr(stdscr, 26, 0, "  Ctrl+E: 5 (end of line)")
+    
+    stdscr.refresh()
+    
+    while True:
+        key = stdscr.getch()
+        if key == 27:  # ESC
+            break
+        
+        # Clear the key display area
+        for i in range(3, 7):
+            stdscr.move(i, 10)
+            stdscr.clrtoeol()
+        
+        # Display key information
+        try:
+            safe_addstr(stdscr, 3, 10, f"{key}")
+            
+            # Try to get key name
+            key_name = "Unknown"
+            try:
+                if hasattr(curses, 'keyname'):
+                    key_name = curses.keyname(key).decode()
+                else:
+                    # Fallback for systems without keyname
+                    if key == 27:
+                        key_name = "ESC"
+                    elif key == 10 or key == 13:
+                        key_name = "Enter"
+                    elif key == 32:
+                        key_name = "Space"
+                    elif key == 127 or key == 8 or key == 263:
+                        key_name = "Backspace"
+                    elif key == 259:
+                        key_name = "Arrow Up"
+                    elif key == 258:
+                        key_name = "Arrow Down"
+                    elif key == 260:
+                        key_name = "Arrow Left"
+                    elif key == 261:
+                        key_name = "Arrow Right"
+                    elif key == 550:
+                        key_name = "Ctrl+Left"
+                    elif key == 565:
+                        key_name = "Ctrl+Right"
+                    elif key == 548:
+                        key_name = "Alt+Left"
+                    elif key == 1:
+                        key_name = "Ctrl+A"
+                    elif key == 5:
+                        key_name = "Ctrl+E"
+                    elif 32 <= key <= 126:
+                        key_name = f"'{chr(key)}'"
+            except:
+                key_name = "Unknown"
+            
+            safe_addstr(stdscr, 4, 10, key_name)
+            safe_addstr(stdscr, 5, 10, f"0x{key:02x}")
+            
+            # Show character if it's printable
+            if 32 <= key <= 126:
+                safe_addstr(stdscr, 6, 10, f"'{chr(key)}'")
+            else:
+                safe_addstr(stdscr, 6, 10, "N/A")
+        except Exception as e:
+            safe_addstr(stdscr, 3, 10, f"Error: {e}")
+        
+        stdscr.refresh()
 
 if __name__ == "__main__":
     main()
