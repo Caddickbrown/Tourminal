@@ -61,6 +61,32 @@
   - [x] Template viewer for browsing available templates
   - [x] Pre-filled tags and structured content
 
+### ✅ Auto-Detection of Tags - COMPLETED (v1.1)
+- [x] ✅ **Tag Detection System**
+  - [x] Auto-detection of tags using configurable prefixes (#, @, etc.)
+  - [x] Configurable tag prefixes in settings
+  - [x] Merge detected tags with existing tags option
+  - [x] Tag detection feedback during entry creation
+  - [x] Debug tool for testing tag detection
+  - [x] Settings menu integration for tag detection options
+
+### ✅ Quick Access Improvements - COMPLETED (v1.1)
+- [x] ✅ **Separated Entry Creation Options**
+  - [x] New Blank Entry with Ctrl+N for instant access
+  - [x] New Entry with Template with Ctrl+T for structured entries
+  - [x] Updated main menu with clear separation
+  - [x] Updated help overlay with new keyboard shortcuts
+  - [x] Faster workflow for quick journaling
+
+### ✅ Mac Keyboard Shortcuts - COMPLETED (v1.1)
+- [x] ✅ **Platform-Specific Keyboard Shortcuts**
+  - [x] Auto-detection of macOS platform
+  - [x] Configurable Mac keyboard shortcuts setting
+  - [x] Platform-specific shortcut mapping
+  - [x] Updated help overlay with platform information
+  - [x] Settings menu integration for keyboard preferences
+  - [x] Better compatibility with macOS system shortcuts
+
 ---
 
 ## 🚀 Current Priority Features (High Priority)
@@ -236,16 +262,24 @@
 - **Search & Analytics**: ✅ Entry search and statistics
 - **Editor Features**: ✅ Enhanced terminal editing with word count
 
+### ✅ Completed (v1.1)
+- **Auto-Detection of Tags**: ✅ Configurable tag detection with # and @ prefixes
+- **Tag Management**: ✅ Merge detected tags with existing tags
+- **Settings Integration**: ✅ Tag detection settings in configuration menu
+- **Debug Tools**: ✅ Tag detection testing and validation
+- **Quick Access Improvements**: ✅ Separated blank and template entry creation
+- **Mac Keyboard Shortcuts**: ✅ Platform-specific keyboard shortcuts for better macOS compatibility
+
 ### 🔄 In Progress
 - **Export/Import System**: Planning phase
 - **Advanced Search**: Research and design
 - **Performance Optimization**: Monitoring and testing
 
-### 📅 Planned for v1.1
+### 📅 Planned for v1.2
 - **File Export** (PDF, HTML, text)
 - **Advanced Search Filters**
 - **Auto-save and Spell Check**
-- **Entry Templates**
+- **Enhanced Tag Analytics**
 
 ### 📅 Planned for v2.0
 - **Encryption and Security**
@@ -261,14 +295,17 @@
 1. ✅ **COMPLETED**: Create production application
 2. ✅ **COMPLETED**: Implement core features and UI improvements
 3. ✅ **COMPLETED**: Add backup system and enhanced settings
-4. [ ] **IN PROGRESS**: Document installation and usage
-5. [ ] **NEXT**: Implement file export functionality
+4. ✅ **COMPLETED**: Implement auto-detection of tags
+5. ✅ **COMPLETED**: Separate blank and template entry creation for speed
+6. ✅ **COMPLETED**: Customize keyboard shortcuts for Mac compatibility
+7. [ ] **IN PROGRESS**: Document installation and usage
+8. [ ] **NEXT**: Implement file export functionality
 
 ### Short Term (Next Month)
 1. [ ] Add PDF/HTML export capabilities
 2. [ ] Implement advanced search filters
 3. [ ] Add auto-save and basic spell check
-4. [ ] Create entry templates system
+4. [ ] Enhanced tag analytics and reporting
 
 ### Long Term (Next Quarter)
 1. [ ] Performance optimization for large datasets
@@ -291,8 +328,8 @@
 - [ ] Word count goal per day (configurable)
 - [ ] Daily writing prompt (optional feature)
 - [ ] USB sync script for importing/exporting journal
-- [ ] Tagging or mood indicators (optional)
+- [x] ✅ **Tagging or mood indicators** (auto-detection implemented)
 
 *Last updated: June 27, 2025*
-*Version: 1.0 - Production Release*
+*Version: 1.1 - Auto-Detection of Tags Release*
 *Priority levels: 🚀 High | 🔧 Medium | 🌟 Low | 📋 Quick Win*

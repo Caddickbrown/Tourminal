@@ -32,7 +32,11 @@ DEFAULT_SETTINGS = {
     "theme": "default",
     "show_word_count": True,
     "show_entry_count": True,
-    "confirm_delete": True
+    "confirm_delete": True,
+    "auto_detect_tags": True,
+    "tag_prefixes": ["#", "@"],
+    "merge_detected_tags": True,
+    "mac_keyboard_shortcuts": True
 }
 
 def load_settings():
@@ -54,6 +58,52 @@ def save_settings(settings):
 def get_settings():
     """Get current settings"""
     return load_settings()
+
+def get_platform_shortcuts():
+    """Get platform-specific keyboard shortcuts"""
+    settings = get_settings()
+    use_mac_shortcuts = settings.get("mac_keyboard_shortcuts", True) and platform.system() == "Darwin"
+    
+    if use_mac_shortcuts:
+        return {
+            "new_blank_entry": 14,      # Ctrl+N (works on Mac)
+            "new_template_entry": 20,   # Ctrl+T (works on Mac)
+            "edit_today": 15,           # Ctrl+O (works on Mac)
+            "search": 6,                # Ctrl+F (works on Mac)
+            "backup": 2,                # Ctrl+B (works on Mac)
+            "settings": 19,             # Ctrl+S (works on Mac)
+            "help": 8,                  # Ctrl+H (works on Mac)
+            "save": 19,                 # Ctrl+S (works on Mac)
+            "quit": 17,                 # Ctrl+Q (works on Mac)
+            "copy": 3,                  # Ctrl+C (works on Mac)
+            "delete": 4,                # Ctrl+D (works on Mac)
+            "line_start": 1,            # Ctrl+A (works on Mac)
+            "line_end": 5,              # Ctrl+E (works on Mac)
+            "word_left": 550,           # Ctrl+Left (Linux)
+            "word_right": 565,          # Ctrl+Right (Linux)
+            "alt_left": 548,            # Alt+Left (Linux)
+            "alt_right": 562,           # Alt+Right (Linux)
+        }
+    else:
+        return {
+            "new_blank_entry": 14,      # Ctrl+N
+            "new_template_entry": 20,   # Ctrl+T
+            "edit_today": 15,           # Ctrl+O
+            "search": 6,                # Ctrl+F
+            "backup": 2,                # Ctrl+B
+            "settings": 19,             # Ctrl+S
+            "help": 8,                  # Ctrl+H
+            "save": 19,                 # Ctrl+S
+            "quit": 17,                 # Ctrl+Q
+            "copy": 3,                  # Ctrl+C
+            "delete": 4,                # Ctrl+D
+            "line_start": 1,            # Ctrl+A
+            "line_end": 5,              # Ctrl+E
+            "word_left": 550,           # Ctrl+Left (Linux)
+            "word_right": 565,          # Ctrl+Right (Linux)
+            "alt_left": 548,            # Alt+Left (Linux)
+            "alt_right": 562,           # Alt+Right (Linux)
+        }
 
 def ensure_directories():
     """Ensure journal and backup directories exist"""
@@ -288,14 +338,28 @@ def input_with_prefill(stdscr, y, x, prefill, max_width=None):
     
     def redraw_buffer():
         """Redraw the entire buffer and position cursor"""
-        stdscr.move(y, x)
-        stdscr.clrtoeol()
-        display_text = ''.join(buffer)
-        if len(display_text) > max_width:
-            display_text = display_text[:max_width-3] + "..."
-        safe_addstr(stdscr, y, x, display_text)
-        stdscr.move(y, x + min(pos, max_width-1))
-        stdscr.refresh()
+        try:
+            height, width = stdscr.getmaxyx()
+            
+            # Ensure y and x are within bounds
+            safe_y = max(0, min(y, height - 1))
+            safe_x = max(0, min(x, width - 1))
+            
+            stdscr.move(safe_y, safe_x)
+            stdscr.clrtoeol()
+            display_text = ''.join(buffer)
+            if len(display_text) > max_width:
+                display_text = display_text[:max_width-3] + "..."
+            safe_addstr(stdscr, safe_y, safe_x, display_text)
+            
+            # Ensure cursor position is valid
+            cursor_x = safe_x + min(pos, max_width-1)
+            if cursor_x >= width - 1:
+                cursor_x = width - 2
+            stdscr.move(safe_y, cursor_x)
+            stdscr.refresh()
+        except curses.error:
+            pass
     
     buffer = list(prefill)
     pos = len(prefill)
@@ -358,6 +422,58 @@ def get_word_count(content):
 def format_timestamp():
     """Get formatted timestamp for entries"""
     return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+
+def extract_tags_from_content(content, tag_prefixes=None):
+    """Extract tags from content using specified prefixes"""
+    if not content:
+        return []
+    if tag_prefixes is None:
+        settings = get_settings()
+        tag_prefixes = settings.get("tag_prefixes", ["#", "@"])
+    
+    tags = set()
+    lines = content.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Split line into words and check each word
+        words = line.split()
+        for word in words:
+            for prefix in tag_prefixes:
+                if word.startswith(prefix):
+                    # Extract the tag (remove prefix and any trailing punctuation)
+                    tag = word[len(prefix):]
+                    # Remove common punctuation that might follow the tag
+                    tag = tag.rstrip('.,;:!?')
+                    # Only add if it's a valid tag (not empty and contains at least one alphanumeric character)
+                    if tag and any(c.isalnum() for c in tag):
+                        tags.add(tag.lower())
+                    break  # Only match one prefix per word
+    return sorted(list(tags))
+
+def merge_tags(existing_tags, detected_tags):
+    """Merge existing tags with detected tags, avoiding duplicates"""
+    if not existing_tags:
+        return ", ".join(detected_tags)
+    if not detected_tags:
+        return existing_tags
+    
+    # Parse existing tags
+    existing_tag_list = [tag.strip().lower() for tag in existing_tags.split(',') if tag.strip()]
+    
+    # Combine and deduplicate
+    all_tags = existing_tag_list + detected_tags
+    unique_tags = []
+    seen = set()
+    
+    for tag in all_tags:
+        if tag not in seen:
+            unique_tags.append(tag)
+            seen.add(tag)
+    
+    return ", ".join(unique_tags)
 
 def get_entry_templates():
     """Get available entry templates"""
@@ -532,11 +648,16 @@ def show_help_overlay(stdscr):
     """Show keyboard shortcuts help overlay"""
     height, width = stdscr.getmaxyx()
     
+    # Get platform-specific shortcuts
+    shortcuts = get_platform_shortcuts()
+    platform_name = "Mac" if platform.system() == "Darwin" else "Linux/Windows"
+    
     help_text = [
-        "Keyboard Shortcuts",
+        f"Keyboard Shortcuts ({platform_name})",
         "",
         "Main Menu:",
-        "  Ctrl+N - New Entry (Terminal)",
+        "  Ctrl+N - New Blank Entry (Terminal)",
+        "  Ctrl+T - New Entry with Template",
         "  Ctrl+O - Edit Today's Journal",
         "  Ctrl+F - Search Entries",
         "  Ctrl+B - Create Backup",
@@ -557,6 +678,11 @@ def show_help_overlay(stdscr):
         "File Operations:",
         "  Ctrl+C - Copy entry",
         "  Ctrl+D - Delete entry",
+        "",
+        "Platform Notes:",
+        f"  Using {platform_name} shortcuts",
+        "  Cmd+Q is reserved by macOS",
+        "  Use Ctrl+Q to quit editors",
         "",
         "Press any key to close..."
     ]
@@ -598,15 +724,70 @@ def write_in_terminal(stdscr, title, tags):
     cursor_col = 0
     
     def redraw_current_line():
-        stdscr.move(y_pos, 0)
-        stdscr.clrtoeol()
-        stdscr.addstr(y_pos, 0, current_line)
-        stdscr.move(y_pos, cursor_col)
-        
-        # Update status bar with word count
-        word_count = get_word_count('\n'.join(content_lines + [current_line]))
-        show_status_bar(stdscr, f"Words: {word_count} | Ctrl+D to finish | Ctrl+H for help")
-        stdscr.refresh()
+        nonlocal y_pos, cursor_col
+        try:
+            height, width = stdscr.getmaxyx()
+            
+            # Ensure y_pos is within bounds
+            if y_pos < 0:
+                y_pos = 0
+            elif y_pos >= height - 1:  # Leave room for status bar
+                y_pos = height - 2
+            
+            # Ensure cursor_col is within bounds
+            if cursor_col < 0:
+                cursor_col = 0
+            elif cursor_col >= width - 1:
+                cursor_col = width - 2
+            
+            stdscr.move(y_pos, cursor_col)
+            stdscr.refresh()
+            
+            # Ensure initial cursor position is valid
+            height, width = stdscr.getmaxyx()
+            if y_pos >= height - 1:
+                y_pos = height - 2
+            if cursor_col >= width - 1:
+                cursor_col = width - 2
+            if y_pos < 3:
+                y_pos = 3
+            if cursor_col < 0:
+                cursor_col = 0
+            
+            stdscr.move(y_pos, cursor_col)
+            stdscr.refresh()
+            
+            stdscr.move(y_pos, cursor_col)
+            stdscr.clrtoeol()
+            safe_addstr(stdscr, y_pos, 0, current_line)
+            stdscr.move(y_pos, cursor_col)
+            
+            # Update status bar with word count
+            word_count = get_word_count('\n'.join(content_lines + [current_line]))
+            show_status_bar(stdscr, f"Words: {word_count} | Ctrl+D to finish | Ctrl+H for help")
+            stdscr.refresh()
+        except curses.error:
+            # If there's still an error, try to recover
+            try:
+                stdscr.clear()
+                stdscr.addstr(0, 0, f"Writing: {title}")
+                stdscr.addstr(1, 0, "Start typing your entry (Ctrl+D when finished, Ctrl+H for help):")
+                
+                # Redraw all content
+                for i, line in enumerate(content_lines):
+                    if i + 3 < height - 2:
+                        safe_addstr(stdscr, 3 + i, 0, line)
+                
+                # Reset position to safe values
+                y_pos = max(3 + len(content_lines), 3)
+                if y_pos >= height - 2:
+                    y_pos = height - 3
+                cursor_col = min(cursor_col, width - 2)
+                
+                stdscr.move(y_pos, cursor_col)
+                stdscr.refresh()
+            except:
+                pass
     
     stdscr.move(y_pos, cursor_col)
     stdscr.refresh()
@@ -648,13 +829,19 @@ def write_in_terminal(stdscr, title, tags):
             elif char == curses.KEY_LEFT:
                 if cursor_col > 0:
                     cursor_col -= 1
-                    stdscr.move(y_pos, cursor_col)
-                    stdscr.refresh()
+                    # Ensure cursor position is valid
+                    height, width = stdscr.getmaxyx()
+                    if y_pos < height - 1 and cursor_col < width - 1:
+                        stdscr.move(y_pos, cursor_col)
+                        stdscr.refresh()
             elif char == curses.KEY_RIGHT:
                 if cursor_col < len(current_line):
                     cursor_col += 1
-                    stdscr.move(y_pos, cursor_col)
-                    stdscr.refresh()
+                    # Ensure cursor position is valid
+                    height, width = stdscr.getmaxyx()
+                    if y_pos < height - 1 and cursor_col < width - 1:
+                        stdscr.move(y_pos, cursor_col)
+                        stdscr.refresh()
             else:
                 if 32 <= char <= 126:
                     current_line = current_line[:cursor_col] + chr(char) + current_line[cursor_col:]
@@ -742,7 +929,42 @@ def new_entry_with_template(stdscr, use_editor=False):
         else:
             content = write_in_terminal(stdscr, title, tags)
         
-        entry_content = f"# {title}\n\ntags: {tags}\n\n{content}\n"
+        # Auto-detect tags from content if enabled
+        settings = get_settings()
+        final_tags = tags
+        if settings.get("auto_detect_tags", True) and content:
+            detected_tags = extract_tags_from_content(content)
+            if detected_tags:
+                if settings.get("merge_detected_tags", True):
+                    final_tags = merge_tags(tags, detected_tags)
+                else:
+                    final_tags = ", ".join(detected_tags)
+                
+                # Show tag detection feedback
+                stdscr.clear()
+                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
+                
+                if detected_tags:
+                    stdscr.addstr(2, 0, f"Auto-detected tags: {', '.join(detected_tags)}")
+                    stdscr.addstr(3, 0, f"Original tags: {tags}")
+                    stdscr.addstr(4, 0, f"Final tags: {final_tags}")
+                    stdscr.addstr(5, 0, f"Tag detection settings: auto_detect={settings.get('auto_detect_tags', True)}, merge={settings.get('merge_detected_tags', True)}")
+                
+                stdscr.addstr(7, 0, "Press any key to continue...")
+                stdscr.getch()
+            else:
+                # Show that no tags were detected
+                stdscr.clear()
+                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
+                stdscr.addstr(2, 0, "No tags detected in content")
+                stdscr.addstr(3, 0, f"Original tags: {tags}")
+                stdscr.addstr(4, 0, f"Final tags: {final_tags}")
+                stdscr.addstr(6, 0, "Press any key to continue...")
+                stdscr.getch()
+        
+        entry_content = f"# {title}\n\ntags: {final_tags}\n\n{content}\n"
         append_to_daily_file(today_file, entry_content)
         
         # Show success message
@@ -751,10 +973,7 @@ def new_entry_with_template(stdscr, use_editor=False):
         for i in range(3, 0, -1):
             stdscr.clear()
             stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-            if template:
-                stdscr.addstr(1, 0, f"Template: {template['title']} | Words: {get_word_count(content)}")
-            else:
-                stdscr.addstr(1, 0, f"Words: {get_word_count(content)} | File words: {stats['words']}")
+            stdscr.addstr(1, 0, f"Words: {get_word_count(content)} | File words: {stats['words']}")
             stdscr.addstr(3, 0, f"Continuing in {i} seconds... (Press any key to continue now)")
             stdscr.refresh()
             
@@ -783,25 +1002,37 @@ def write_in_terminal_with_prefill(stdscr, title, tags, prefill_content):
     y_start = 3
     
     def redraw_content():
-        # Clear content area
-        for i in range(y_start, height - 2):
-            stdscr.move(i, 0)
-            stdscr.clrtoeol()
-        
-        # Draw all content lines
-        for i, line in enumerate(content_lines):
-            if y_start + i < height - 2:
-                stdscr.addstr(y_start + i, 0, line[:width-1])
-        
-        # Position cursor
-        cursor_y = y_start + current_line_idx
-        if cursor_y < height - 2:
-            stdscr.move(cursor_y, min(cursor_col, width-1))
-        
-        # Update status bar
-        word_count = get_word_count('\n'.join(content_lines))
-        show_status_bar(stdscr, f"Words: {word_count} | Line {current_line_idx + 1}/{len(content_lines)} | Ctrl+D to finish")
-        stdscr.refresh()
+        try:
+            # Clear content area
+            for i in range(y_start, height - 2):
+                if i < height - 1:
+                    stdscr.move(i, 0)
+                    stdscr.clrtoeol()
+            
+            # Draw all content lines
+            for i, line in enumerate(content_lines):
+                if y_start + i < height - 2:
+                    safe_addstr(stdscr, y_start + i, 0, line[:width-1])
+            
+            # Position cursor with bounds checking
+            cursor_y = y_start + current_line_idx
+            if cursor_y >= height - 1:
+                cursor_y = height - 2
+            if cursor_y < y_start:
+                cursor_y = y_start
+            
+            safe_cursor_col = min(cursor_col, width-1)
+            if safe_cursor_col < 0:
+                safe_cursor_col = 0
+            
+            stdscr.move(cursor_y, safe_cursor_col)
+            
+            # Update status bar
+            word_count = get_word_count('\n'.join(content_lines))
+            show_status_bar(stdscr, f"Words: {word_count} | Line {current_line_idx + 1}/{len(content_lines)} | Ctrl+D to finish")
+            stdscr.refresh()
+        except curses.error:
+            pass
     
     redraw_content()
     
@@ -1122,25 +1353,30 @@ def edit_daily_file(stdscr, filename, content):
         
         # Show status bar
         stats = {"words": get_word_count('\n'.join(lines)), "lines": len(lines), "chars": len('\n'.join(lines))}
-        show_status_bar(stdscr, f"Line {cursor_line + 1}/{len(lines)} | Ctrl+S save, Ctrl+Q quit", stats)
+        shortcuts = get_platform_shortcuts()
+        platform_name = "Mac" if platform.system() == "Darwin" else "Linux/Windows"
+        show_status_bar(stdscr, f"Line {cursor_line + 1}/{len(lines)} | Ctrl+S save, Ctrl+Q quit ({platform_name})", stats)
         
         edit_win.refresh()
         stdscr.refresh()
     
     redraw_editor()
     
+    # Get platform-specific shortcuts
+    shortcuts = get_platform_shortcuts()
+    
     while True:
         try:
             key = edit_win.getch()
             
-            if key == 19:  # Ctrl+S
+            if key == shortcuts["save"]:  # Ctrl+S
                 write_daily_file(filename, '\n'.join(lines))
                 modified = False
                 redraw_editor()
                 show_status_bar(stdscr, "File saved!")
                 time.sleep(1)
                 continue
-            elif key == 17:  # Ctrl+Q
+            elif key == shortcuts["quit"]:  # Ctrl+Q
                 if modified:
                     # Ask for confirmation
                     confirm_win = curses.newwin(7, 50, height//2 - 3, width//2 - 25)
@@ -1458,6 +1694,11 @@ def settings_menu(stdscr):
         "Show Word Count",
         "Confirm Delete",
         "",
+        "Auto Detect Tags",
+        "Tag Prefixes",
+        "Merge Detected Tags",
+        "Mac Keyboard Shortcuts",
+        "",
         "View Current Settings",
         "Reset to Defaults",
         "",
@@ -1489,6 +1730,14 @@ def settings_menu(stdscr):
             return settings.get("default_editor", "nano")
         elif item == "Date Format":
             return settings.get("date_format", "%Y-%m-%d")
+        elif item == "Auto Detect Tags":
+            return "ON" if settings.get("auto_detect_tags", True) else "OFF"
+        elif item == "Tag Prefixes":
+            return ", ".join(settings.get("tag_prefixes", ["#", "@"]))
+        elif item == "Merge Detected Tags":
+            return "ON" if settings.get("merge_detected_tags", True) else "OFF"
+        elif item == "Mac Keyboard Shortcuts":
+            return "ON" if settings.get("mac_keyboard_shortcuts", True) else "OFF"
         else:
             return None
 
@@ -1551,6 +1800,14 @@ def settings_menu(stdscr):
                 toggle_setting(stdscr, "show_word_count", "Show Word Count", settings)
             elif menu[current_row] == "Confirm Delete":
                 toggle_setting(stdscr, "confirm_delete", "Confirm Delete", settings)
+            elif menu[current_row] == "Auto Detect Tags":
+                toggle_setting(stdscr, "auto_detect_tags", "Auto Detect Tags", settings)
+            elif menu[current_row] == "Tag Prefixes":
+                edit_list_setting(stdscr, "tag_prefixes", "Tag Prefixes", settings)
+            elif menu[current_row] == "Merge Detected Tags":
+                toggle_setting(stdscr, "merge_detected_tags", "Merge Detected Tags", settings)
+            elif menu[current_row] == "Mac Keyboard Shortcuts":
+                toggle_setting(stdscr, "mac_keyboard_shortcuts", "Mac Keyboard Shortcuts", settings)
             elif menu[current_row] == "View Current Settings":
                 view_current_settings(stdscr, settings)
             elif menu[current_row] == "Reset to Defaults":
@@ -1612,6 +1869,37 @@ def cycle_setting(stdscr, key, name, options, settings):
     stdscr.addstr(0, 0, f"✅ {name} set to: {settings[key]}")
     stdscr.addstr(2, 0, "Press any key to continue...")
     stdscr.getch()
+
+def edit_list_setting(stdscr, key, name, settings):
+    """Edit a list setting (comma-separated values)"""
+    curses.echo()
+    stdscr.clear()
+    stdscr.addstr(0, 0, f"Edit {name}")
+    
+    current_value = settings[key]
+    if isinstance(current_value, list):
+        current_display = ", ".join(current_value)
+    else:
+        current_display = str(current_value)
+    
+    stdscr.addstr(2, 0, f"Current: {current_display}")
+    stdscr.addstr(3, 0, "Enter comma-separated values (e.g., #, @, $)")
+    stdscr.addstr(5, 0, f"New value: ")
+    
+    new_value = input_with_prefill(stdscr, 5, 11, current_display)
+    curses.noecho()
+    
+    if new_value is not None and new_value.strip():
+        # Parse comma-separated values
+        new_list = [item.strip() for item in new_value.split(',') if item.strip()]
+        settings[key] = new_list
+        save_settings(settings)
+        
+        stdscr.clear()
+        stdscr.addstr(0, 0, f"✅ {name} updated!")
+        stdscr.addstr(1, 0, f"New value: {', '.join(new_list)}")
+        stdscr.addstr(3, 0, "Press any key to continue...")
+        stdscr.getch()
 
 def view_current_settings(stdscr, settings):
     """Display all current settings"""
@@ -1708,7 +1996,8 @@ def main_menu(stdscr):
     current_row = 0
     
     menu = [
-        "📝 New Entry with Template [Ctrl+N]",
+        "📝 New Blank Entry [Ctrl+N]",
+        "📝 New Entry with Template [Ctrl+T]",
         "📝 New Entry (Editor)",
         "",
         "📖 Read Daily File",
@@ -1763,25 +2052,31 @@ def main_menu(stdscr):
             
         key = stdscr.getch()
         
+        # Get platform-specific shortcuts
+        shortcuts = get_platform_shortcuts()
+        
         # Handle keyboard shortcuts
-        if key == 14:  # Ctrl+N
+        if key == shortcuts["new_blank_entry"]:  # Ctrl+N
+            new_blank_entry(stdscr, use_editor=False)
+            continue
+        elif key == shortcuts["new_template_entry"]:  # Ctrl+T
             new_entry_with_template(stdscr, use_editor=False)
             continue
-        elif key == 15:  # Ctrl+O
+        elif key == shortcuts["edit_today"]:  # Ctrl+O
             today_file = get_today_filename()
             content = read_daily_file(today_file)
             edit_daily_file(stdscr, today_file, content)
             continue
-        elif key == 6:  # Ctrl+F
+        elif key == shortcuts["search"]:  # Ctrl+F
             search_entries(stdscr)
             continue
-        elif key == 2:  # Ctrl+B
+        elif key == shortcuts["backup"]:  # Ctrl+B
             manual_backup(stdscr)
             continue
-        elif key == 19:  # Ctrl+S
+        elif key == shortcuts["settings"]:  # Ctrl+S
             settings_menu(stdscr)
             continue
-        elif key == 8:  # Ctrl+H
+        elif key == shortcuts["help"]:  # Ctrl+H
             show_help_overlay(stdscr)
             continue
         
@@ -1797,7 +2092,9 @@ def main_menu(stdscr):
         elif is_selection_key(key):
             selected_item = menu[current_row]
             
-            if "New Entry with Template" in selected_item:
+            if "New Blank Entry" in selected_item:
+                new_blank_entry(stdscr, use_editor=False)
+            elif "New Entry with Template" in selected_item:
                 new_entry_with_template(stdscr, use_editor=False)
             elif "New Entry (Editor)" in selected_item:
                 new_entry_with_template(stdscr, use_editor=True)
@@ -1983,6 +2280,8 @@ def debug_tools_menu(stdscr):
     menu = [
         "Journal Directory Info",
         "Parse Entries Debug",
+        "Tag Detection Test",
+        "Keyboard Shortcuts Test",
         "Keyboard Key Codes",
         "Create Test File",
         "Tutorial / Help",
@@ -2017,6 +2316,10 @@ def debug_tools_menu(stdscr):
                 debug_journal_info(stdscr)
             elif menu[current_row] == "Parse Entries Debug":
                 debug_parse_entries(stdscr)
+            elif menu[current_row] == "Tag Detection Test":
+                debug_tag_detection(stdscr)
+            elif menu[current_row] == "Keyboard Shortcuts Test":
+                debug_keyboard_shortcuts(stdscr)
             elif menu[current_row] == "Keyboard Key Codes":
                 debug_keyboard_keys(stdscr)
             elif menu[current_row] == "Create Test File":
@@ -2317,6 +2620,134 @@ def show_tutorial(stdscr):
         elif key == 27 or key == 10 or key == 32:
             break
 
+def debug_tag_detection(stdscr):
+    """Debug tool to test tag detection functionality"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Tag Detection Test")
+    safe_addstr(stdscr, 1, 0, "Testing tag extraction from sample content")
+    
+    settings = get_settings()
+    tag_prefixes = settings.get("tag_prefixes", ["#", "@"])
+    auto_detect_enabled = settings.get("auto_detect_tags", True)
+    merge_enabled = settings.get("merge_detected_tags", True)
+    
+    # Sample content with various tags
+    sample_content = """This is a test entry with some tags.
+
+I'm working on a #project today and meeting with @john and @sarah.
+The meeting is about #work and #planning.
+
+Some thoughts on #ideas and #goals for the future.
+Also discussing #health and #fitness plans.
+
+End of entry with #final tag."""
+    
+    safe_addstr(stdscr, 3, 0, f"Settings:")
+    safe_addstr(stdscr, 4, 0, f"  Tag prefixes: {', '.join(tag_prefixes)}")
+    safe_addstr(stdscr, 5, 0, f"  Auto-detect enabled: {auto_detect_enabled}")
+    safe_addstr(stdscr, 6, 0, f"  Merge tags enabled: {merge_enabled}")
+    safe_addstr(stdscr, 7, 0, "Sample content:")
+    
+    # Display sample content
+    lines = sample_content.split('\n')
+    for i, line in enumerate(lines):
+        if i < 8:  # Limit display
+            safe_addstr(stdscr, 9 + i, 2, line)
+    
+    # Test tag extraction
+    detected_tags = extract_tags_from_content(sample_content, tag_prefixes)
+    
+    safe_addstr(stdscr, 20, 0, "Detected tags:")
+    if detected_tags:
+        for i, tag in enumerate(detected_tags):
+            safe_addstr(stdscr, 21 + i, 2, f"• {tag}")
+    else:
+        safe_addstr(stdscr, 21, 2, "No tags detected")
+    
+    # Test merging
+    existing_tags = "existing, tags"
+    merged_tags = merge_tags(existing_tags, detected_tags)
+    safe_addstr(stdscr, 28, 0, f"Existing tags: {existing_tags}")
+    safe_addstr(stdscr, 29, 0, f"Merged tags: {merged_tags}")
+    
+    # Test with different prefixes
+    safe_addstr(stdscr, 31, 0, "Testing with different prefixes:")
+    test_prefixes = ["$", "!", "&"]
+    for i, prefix in enumerate(test_prefixes):
+        test_tags = extract_tags_from_content(sample_content, [prefix])
+        safe_addstr(stdscr, 32 + i, 2, f"{prefix}: {', '.join(test_tags) if test_tags else 'none'}")
+    
+    safe_addstr(stdscr, 36, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def debug_keyboard_shortcuts(stdscr):
+    """Debug tool to test platform-specific keyboard shortcuts"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Keyboard Shortcuts Test")
+    safe_addstr(stdscr, 1, 0, "Testing platform-specific keyboard shortcuts")
+    
+    shortcuts = get_platform_shortcuts()
+    platform_name = "Mac" if platform.system() == "Darwin" else "Linux/Windows"
+    settings = get_settings()
+    use_mac_shortcuts = settings.get("mac_keyboard_shortcuts", True)
+    
+    safe_addstr(stdscr, 3, 0, f"Platform: {platform.system()} ({platform_name})")
+    safe_addstr(stdscr, 4, 0, f"Mac shortcuts enabled: {use_mac_shortcuts}")
+    safe_addstr(stdscr, 5, 0, f"Active shortcuts:")
+    
+    y_pos = 7
+    shortcut_names = {
+        "new_blank_entry": "New Blank Entry (Ctrl+N)",
+        "new_template_entry": "New Template Entry (Ctrl+T)",
+        "edit_today": "Edit Today (Ctrl+O)",
+        "search": "Search (Ctrl+F)",
+        "backup": "Backup (Ctrl+B)",
+        "settings": "Settings (Ctrl+S)",
+        "help": "Help (Ctrl+H)",
+        "save": "Save (Ctrl+S)",
+        "quit": "Quit (Ctrl+Q)",
+        "copy": "Copy (Ctrl+C)",
+        "delete": "Delete (Ctrl+D)"
+    }
+    
+    for key, name in shortcut_names.items():
+        if key in shortcuts:
+            safe_addstr(stdscr, y_pos, 2, f"{name}: {shortcuts[key]}")
+            y_pos += 1
+    
+    safe_addstr(stdscr, y_pos + 2, 0, "Press keys to test (ESC to exit):")
+    safe_addstr(stdscr, y_pos + 3, 0, "Key Code:")
+    safe_addstr(stdscr, y_pos + 4, 0, "Key Name:")
+    safe_addstr(stdscr, y_pos + 5, 0, "Action:")
+    
+    while True:
+        key = stdscr.getch()
+        if key == 27:  # ESC
+            break
+            
+        # Clear previous key info
+        for i in range(3):
+            stdscr.move(y_pos + 3 + i, 10)
+            stdscr.clrtoeol()
+        
+        # Show key info
+        safe_addstr(stdscr, y_pos + 3, 10, f"{key}")
+        
+        # Find matching shortcut
+        action = "No action"
+        for shortcut_key, shortcut_code in shortcuts.items():
+            if key == shortcut_code:
+                action = shortcut_names.get(shortcut_key, shortcut_key)
+                break
+        
+        safe_addstr(stdscr, y_pos + 4, 10, f"Key {key}")
+        safe_addstr(stdscr, y_pos + 5, 10, action)
+        
+        stdscr.refresh()
+    
+    safe_addstr(stdscr, y_pos + 7, 0, "Press any key to continue...")
+    stdscr.getch()
+
 def main():
     """Main application entry point"""
     try:
@@ -2337,6 +2768,112 @@ def main():
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
+
+def new_blank_entry(stdscr, use_editor=False):
+    """Create a new blank journal entry without template selection"""
+    ensure_directories()
+    
+    curses.echo()
+    stdscr.clear()
+    
+    # Set up title and tags for blank entry
+    current_datetime = format_timestamp()
+    default_title = f"{current_datetime}"
+    default_tags = ""
+    
+    stdscr.addstr(0, 0, "Title: ")
+    title = input_with_prefill(stdscr, 0, 7, default_title)
+    if title is None:  # ESC pressed
+        curses.noecho()
+        return
+    if not title.strip():
+        title = default_title
+    
+    stdscr.addstr(1, 0, "Tags (comma separated): ")
+    tags = input_with_prefill(stdscr, 1, 25, default_tags)
+    if tags is None:  # ESC pressed
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    today_file = get_today_filename()
+    
+    if use_editor:
+        # Create blank entry
+        entry_content = f"# {title}\n\ntags: {tags}\n\n"
+        
+        append_to_daily_file(today_file, entry_content)
+        
+        stdscr.addstr(3, 0, "Press any key to open editor...")
+        stdscr.getch()
+        curses.endwin()
+        
+        settings = get_settings()
+        editor = settings["default_editor"]
+        if platform.system() == "Windows" and editor == "nano":
+            editor = "notepad.exe"
+        
+        filepath = os.path.join(settings["journal_directory"], today_file)
+        subprocess.call([editor, filepath])
+    else:
+        # Write content in terminal
+        content = write_in_terminal(stdscr, title, tags)
+        
+        # Auto-detect tags from content if enabled
+        settings = get_settings()
+        final_tags = tags
+        if settings.get("auto_detect_tags", True) and content:
+            detected_tags = extract_tags_from_content(content)
+            if detected_tags:
+                if settings.get("merge_detected_tags", True):
+                    final_tags = merge_tags(tags, detected_tags)
+                else:
+                    final_tags = ", ".join(detected_tags)
+                
+                # Show tag detection feedback
+                stdscr.clear()
+                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
+                
+                if detected_tags:
+                    stdscr.addstr(2, 0, f"Auto-detected tags: {', '.join(detected_tags)}")
+                    stdscr.addstr(3, 0, f"Original tags: {tags}")
+                    stdscr.addstr(4, 0, f"Final tags: {final_tags}")
+                    stdscr.addstr(5, 0, f"Tag detection settings: auto_detect={settings.get('auto_detect_tags', True)}, merge={settings.get('merge_detected_tags', True)}")
+                
+                stdscr.addstr(7, 0, "Press any key to continue...")
+                stdscr.getch()
+            else:
+                # Show that no tags were detected
+                stdscr.clear()
+                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
+                stdscr.addstr(2, 0, "No tags detected in content")
+                stdscr.addstr(3, 0, f"Original tags: {tags}")
+                stdscr.addstr(4, 0, f"Final tags: {final_tags}")
+                stdscr.addstr(6, 0, "Press any key to continue...")
+                stdscr.getch()
+        
+        entry_content = f"# {title}\n\ntags: {final_tags}\n\n{content}\n"
+        append_to_daily_file(today_file, entry_content)
+        
+        # Show success message
+        stats = get_file_stats(os.path.join(get_settings()["journal_directory"], today_file))
+        
+        for i in range(3, 0, -1):
+            stdscr.clear()
+            stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+            stdscr.addstr(1, 0, f"Words: {get_word_count(content)} | File words: {stats['words']}")
+            stdscr.addstr(3, 0, f"Continuing in {i} seconds... (Press any key to continue now)")
+            stdscr.refresh()
+            
+            stdscr.timeout(1000)
+            key = stdscr.getch()
+            if key != -1:
+                break
+        
+        stdscr.timeout(-1)
 
 if __name__ == "__main__":
     main()
