@@ -33,11 +33,11 @@ DEFAULT_SETTINGS = {
     "theme": "default",
     "show_word_count": True,
     "show_entry_count": True,
-    "confirm_delete": True
+    "confirm_delete": True,
     "auto_detect_tags": True,
     "tag_prefixes": ["#", "@"],
     "merge_detected_tags": True,
-    "mac_keyboard_shortcuts": True
+    "mac_keyboard_shortcuts": True,
     "auto_save_interval": 300,  # seconds
     "export_directory": os.path.expanduser("~/journal/exports")
 }
@@ -593,13 +593,13 @@ def export_to_pdf(entries_data, export_path, date_range=None):
         pdf_success = False
         error_msg = ""
         
-        # Try weasyprint first
+        # Try weasyprint first (optional dependency)
         try:
             import weasyprint
             weasyprint.HTML(filename=temp_html).write_pdf(export_path)
             pdf_success = True
         except ImportError:
-            # Try wkhtmltopdf
+            # weasyprint not installed, try other methods
             try:
                 subprocess.run(['wkhtmltopdf', temp_html, export_path], 
                              check=True, capture_output=True)
@@ -1548,7 +1548,7 @@ def tag_management_menu(stdscr):
             elif "Rename Tag" in selected_item:
                 rename_tag(stdscr)
             elif "Merge Tags" in selected_item:
-                merge_tags(stdscr)
+                merge_tags_menu(stdscr)
             elif "Delete Unused Tags" in selected_item:
                 delete_unused_tags(stdscr)
             elif "Tag Statistics" in selected_item:
@@ -1629,7 +1629,7 @@ def rename_tag(stdscr):
     safe_addstr(stdscr, 6, 0, "Press any key to continue...")
     stdscr.getch()
 
-def merge_tags(stdscr):
+def merge_tags_menu(stdscr):
     """Merge multiple tags into one"""
     stdscr.clear()
     safe_addstr(stdscr, 0, 0, "Merge Tags")
