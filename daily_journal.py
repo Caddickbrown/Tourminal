@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timedelta
 import shutil
 import tempfile
+import re
 
 # Configuration
 JOURNAL_DIR = os.path.expanduser("~/journal/daily")
@@ -32,7 +33,9 @@ DEFAULT_SETTINGS = {
     "theme": "default",
     "show_word_count": True,
     "show_entry_count": True,
-    "confirm_delete": True
+    "confirm_delete": True,
+    "auto_save_interval": 300,  # seconds
+    "export_directory": os.path.expanduser("~/journal/exports")
 }
 
 def load_settings():
@@ -358,6 +361,1329 @@ def get_word_count(content):
 def format_timestamp():
     """Get formatted timestamp for entries"""
     return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+
+# ================== FILE EXPORT & IMPORT FUNCTIONS ==================
+
+def ensure_export_directory():
+    """Ensure export directory exists"""
+    settings = get_settings()
+    export_dir = settings.get("export_directory", os.path.expanduser("~/journal/exports"))
+    os.makedirs(export_dir, exist_ok=True)
+    return export_dir
+
+def export_to_text(entries_data, export_path, date_range=None):
+    """Export entries to plain text format"""
+    try:
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write("Daily Journal Export\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            if date_range:
+                f.write(f"Date Range: {date_range['start']} to {date_range['end']}\n\n")
+            
+            for entry in entries_data:
+                f.write(f"Date: {entry['filename'].replace('.md', '')}\n")
+                f.write(f"Title: {entry['title']}\n")
+                if entry['tags']:
+                    f.write(f"Tags: {entry['tags']}\n")
+                f.write("-" * 40 + "\n")
+                f.write(f"{entry['content']}\n\n")
+        return True
+    except Exception as e:
+        return False, str(e)
+
+def export_to_html(entries_data, export_path, date_range=None):
+    """Export entries to HTML format with CSS styling"""
+    try:
+        html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Journal Export</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+        }
+        .entry {
+            background: white;
+            margin-bottom: 30px;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-left: 4px solid #667eea;
+        }
+        .entry-date {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        .entry-title {
+            color: #333;
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .entry-tags {
+            margin-bottom: 15px;
+        }
+        .tag {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            margin-right: 5px;
+        }
+        .entry-content {
+            white-space: pre-wrap;
+            line-height: 1.7;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📝 Daily Journal Export</h1>
+        <p>Generated: {generation_time}</p>
+        {date_range_info}
+    </div>
+"""
+
+        generation_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        date_range_info = ""
+        if date_range:
+            date_range_info = f"<p>Date Range: {date_range['start']} to {date_range['end']}</p>"
+        
+        html_content = html_content.format(
+            generation_time=generation_time,
+            date_range_info=date_range_info
+        )
+        
+        for entry in entries_data:
+            entry_html = f"""
+    <div class="entry">
+        <div class="entry-date">📅 {entry['filename'].replace('.md', '')}</div>
+        <div class="entry-title">{entry['title']}</div>
+"""
+            if entry['tags']:
+                tags_html = '<div class="entry-tags">'
+                for tag in entry['tags'].split(','):
+                    tag = tag.strip()
+                    if tag:
+                        tags_html += f'<span class="tag">{tag}</span>'
+                tags_html += '</div>'
+                entry_html += tags_html
+            
+            entry_html += f"""
+        <div class="entry-content">{entry['content']}</div>
+    </div>
+"""
+            html_content += entry_html
+        
+        html_content += """
+    <div class="footer">
+        <p>Generated by Daily Journal Terminal Application</p>
+    </div>
+</body>
+</html>
+"""
+        
+        with open(export_path, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        return True
+    except Exception as e:
+        return False, str(e)
+
+def export_to_pdf(entries_data, export_path, date_range=None):
+    """Export entries to PDF format (requires weasyprint or similar)"""
+    try:
+        # First create HTML, then convert to PDF
+        temp_html = export_path.replace('.pdf', '_temp.html')
+        result = export_to_html(entries_data, temp_html, date_range)
+        
+        if not result:
+            return False, "Failed to create HTML for PDF conversion"
+        
+        # Try to convert HTML to PDF using available tools
+        pdf_success = False
+        error_msg = ""
+        
+        # Try weasyprint first
+        try:
+            import weasyprint
+            weasyprint.HTML(filename=temp_html).write_pdf(export_path)
+            pdf_success = True
+        except ImportError:
+            # Try wkhtmltopdf
+            try:
+                subprocess.run(['wkhtmltopdf', temp_html, export_path], 
+                             check=True, capture_output=True)
+                pdf_success = True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # Try chromium/chrome headless
+                try:
+                    subprocess.run([
+                        'chromium-browser', '--headless', '--disable-gpu', 
+                        '--print-to-pdf=' + export_path, temp_html
+                    ], check=True, capture_output=True)
+                    pdf_success = True
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    try:
+                        subprocess.run([
+                            'google-chrome', '--headless', '--disable-gpu',
+                            '--print-to-pdf=' + export_path, temp_html
+                        ], check=True, capture_output=True)
+                        pdf_success = True
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        error_msg = "No PDF conversion tool found. Install weasyprint, wkhtmltopdf, or chrome/chromium."
+        
+        # Clean up temp HTML file
+        try:
+            os.remove(temp_html)
+        except:
+            pass
+        
+        if pdf_success:
+            return True
+        else:
+            return False, error_msg
+            
+    except Exception as e:
+        return False, str(e)
+
+def export_entries_menu(stdscr):
+    """Export entries menu with various options"""
+    current_row = 0
+    menu = [
+        "Export All Entries (Text)",
+        "Export All Entries (HTML)",
+        "Export All Entries (PDF)",
+        "",
+        "Export Date Range (Text)",
+        "Export Date Range (HTML)", 
+        "Export Date Range (PDF)",
+        "",
+        "Export by Tags (Text)",
+        "Export by Tags (HTML)",
+        "Export by Tags (PDF)",
+        "",
+        "Back"
+    ]
+
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "📤 Export Journal Entries")
+        safe_addstr(stdscr, 1, 0, "Choose export format and scope")
+        
+        export_dir = ensure_export_directory()
+        show_status_bar(stdscr, f"Export directory: {export_dir}")
+        
+        y_pos = 3
+        for idx, item in enumerate(menu):
+            if item == "":
+                y_pos += 1
+                continue
+            attr = curses.A_REVERSE if idx == current_row else 0
+            safe_addstr(stdscr, y_pos, 2, f"> {item}" if idx == current_row else f"  {item}", attr)
+            y_pos += 1
+            
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            current_row = (current_row - 1) % len(menu)
+            while current_row > 0 and menu[current_row] == "":
+                current_row = (current_row - 1) % len(menu)
+        elif key == curses.KEY_DOWN:
+            current_row = (current_row + 1) % len(menu)
+            while current_row < len(menu) - 1 and menu[current_row] == "":
+                current_row = (current_row + 1) % len(menu)
+        elif is_selection_key(key):
+            selected_item = menu[current_row]
+            
+            if "Export All Entries" in selected_item:
+                format_type = selected_item.split("(")[1].split(")")[0].lower()
+                export_all_entries(stdscr, format_type)
+            elif "Export Date Range" in selected_item:
+                format_type = selected_item.split("(")[1].split(")")[0].lower()
+                export_date_range(stdscr, format_type)
+            elif "Export by Tags" in selected_item:
+                format_type = selected_item.split("(")[1].split(")")[0].lower()
+                export_by_tags(stdscr, format_type)
+            elif "Back" in selected_item:
+                break
+        elif key == 27:  # ESC
+            break
+
+def export_all_entries(stdscr, format_type):
+    """Export all journal entries"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, f"Exporting all entries to {format_type.upper()}...")
+    stdscr.refresh()
+    
+    all_entries = get_all_entries()
+    if not all_entries:
+        safe_addstr(stdscr, 2, 0, "No entries found to export.")
+        safe_addstr(stdscr, 4, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    export_dir = ensure_export_directory()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"journal_export_all_{timestamp}.{format_type}"
+    export_path = os.path.join(export_dir, filename)
+    
+    success = False
+    if format_type == "text":
+        success = export_to_text(all_entries, export_path)
+    elif format_type == "html":
+        success = export_to_html(all_entries, export_path)
+    elif format_type == "pdf":
+        success = export_to_pdf(all_entries, export_path)
+    
+    stdscr.clear()
+    if success == True:
+        safe_addstr(stdscr, 0, 0, f"✅ Export successful!")
+        safe_addstr(stdscr, 1, 0, f"File: {filename}")
+        safe_addstr(stdscr, 2, 0, f"Location: {export_dir}")
+        safe_addstr(stdscr, 3, 0, f"Entries exported: {len(all_entries)}")
+    else:
+        safe_addstr(stdscr, 0, 0, f"❌ Export failed!")
+        if isinstance(success, tuple):
+            safe_addstr(stdscr, 1, 0, f"Error: {success[1]}")
+    
+    safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def export_date_range(stdscr, format_type):
+    """Export entries within a date range"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, f"Export Date Range to {format_type.upper()}")
+    safe_addstr(stdscr, 2, 0, "Start date (YYYY-MM-DD): ")
+    
+    start_date = input_with_prefill(stdscr, 2, 24, "")
+    if not start_date:
+        curses.noecho()
+        return
+    
+    safe_addstr(stdscr, 3, 0, "End date (YYYY-MM-DD): ")
+    end_date = input_with_prefill(stdscr, 3, 22, "")
+    if not end_date:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        if start_dt > end_dt:
+            safe_addstr(stdscr, 5, 0, "Error: Start date must be before end date")
+            safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+            stdscr.getch()
+            return
+    except ValueError:
+        safe_addstr(stdscr, 5, 0, "Error: Invalid date format. Use YYYY-MM-DD")
+        safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    # Filter entries by date range
+    all_entries = get_all_entries()
+    filtered_entries = []
+    
+    for entry in all_entries:
+        try:
+            entry_date = datetime.strptime(entry['filename'].replace('.md', ''), "%Y-%m-%d")
+            if start_dt <= entry_date <= end_dt:
+                filtered_entries.append(entry)
+        except ValueError:
+            continue
+    
+    if not filtered_entries:
+        safe_addstr(stdscr, 5, 0, f"No entries found in date range {start_date} to {end_date}")
+        safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    export_dir = ensure_export_directory()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"journal_export_{start_date}_to_{end_date}_{timestamp}.{format_type}"
+    export_path = os.path.join(export_dir, filename)
+    
+    date_range = {"start": start_date, "end": end_date}
+    
+    success = False
+    if format_type == "text":
+        success = export_to_text(filtered_entries, export_path, date_range)
+    elif format_type == "html":
+        success = export_to_html(filtered_entries, export_path, date_range)
+    elif format_type == "pdf":
+        success = export_to_pdf(filtered_entries, export_path, date_range)
+    
+    stdscr.clear()
+    if success == True:
+        safe_addstr(stdscr, 0, 0, f"✅ Export successful!")
+        safe_addstr(stdscr, 1, 0, f"File: {filename}")
+        safe_addstr(stdscr, 2, 0, f"Location: {export_dir}")
+        safe_addstr(stdscr, 3, 0, f"Date range: {start_date} to {end_date}")
+        safe_addstr(stdscr, 4, 0, f"Entries exported: {len(filtered_entries)}")
+    else:
+        safe_addstr(stdscr, 0, 0, f"❌ Export failed!")
+        if isinstance(success, tuple):
+            safe_addstr(stdscr, 1, 0, f"Error: {success[1]}")
+    
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def export_by_tags(stdscr, format_type):
+    """Export entries filtered by tags"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, f"Export by Tags to {format_type.upper()}")
+    safe_addstr(stdscr, 2, 0, "Tags to include (comma separated): ")
+    
+    tags_input = input_with_prefill(stdscr, 2, 33, "")
+    if not tags_input:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    # Parse tags
+    target_tags = [tag.strip().lower() for tag in tags_input.split(',') if tag.strip()]
+    
+    if not target_tags:
+        safe_addstr(stdscr, 4, 0, "No valid tags specified")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    # Filter entries by tags
+    all_entries = get_all_entries()
+    filtered_entries = []
+    
+    for entry in all_entries:
+        if entry['tags']:
+            entry_tags = [tag.strip().lower() for tag in entry['tags'].split(',')]
+            # Check if any target tags match entry tags
+            if any(target_tag in entry_tags for target_tag in target_tags):
+                filtered_entries.append(entry)
+    
+    if not filtered_entries:
+        safe_addstr(stdscr, 4, 0, f"No entries found with tags: {tags_input}")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    export_dir = ensure_export_directory()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_tags = re.sub(r'[^a-zA-Z0-9_-]', '_', tags_input.replace(',', '_'))
+    filename = f"journal_export_tags_{safe_tags}_{timestamp}.{format_type}"
+    export_path = os.path.join(export_dir, filename)
+    
+    success = False
+    if format_type == "text":
+        success = export_to_text(filtered_entries, export_path)
+    elif format_type == "html":
+        success = export_to_html(filtered_entries, export_path)
+    elif format_type == "pdf":
+        success = export_to_pdf(filtered_entries, export_path)
+    
+    stdscr.clear()
+    if success == True:
+        safe_addstr(stdscr, 0, 0, f"✅ Export successful!")
+        safe_addstr(stdscr, 1, 0, f"File: {filename}")
+        safe_addstr(stdscr, 2, 0, f"Location: {export_dir}")
+        safe_addstr(stdscr, 3, 0, f"Tags: {tags_input}")
+        safe_addstr(stdscr, 4, 0, f"Entries exported: {len(filtered_entries)}")
+    else:
+        safe_addstr(stdscr, 0, 0, f"❌ Export failed!")
+        if isinstance(success, tuple):
+            safe_addstr(stdscr, 1, 0, f"Error: {success[1]}")
+    
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def import_entries_menu(stdscr):
+    """Import entries from various formats"""
+    current_row = 0
+    menu = [
+        "Import from Text Files",
+        "Import from Markdown Files", 
+        "Import from JSON Export",
+        "",
+        "Batch Import from Directory",
+        "",
+        "Back"
+    ]
+
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "📥 Import Journal Entries")
+        safe_addstr(stdscr, 1, 0, "Choose import source and format")
+        
+        settings = get_settings()
+        show_status_bar(stdscr, f"Journal directory: {settings['journal_directory']}")
+        
+        y_pos = 3
+        for idx, item in enumerate(menu):
+            if item == "":
+                y_pos += 1
+                continue
+            attr = curses.A_REVERSE if idx == current_row else 0
+            safe_addstr(stdscr, y_pos, 2, f"> {item}" if idx == current_row else f"  {item}", attr)
+            y_pos += 1
+            
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            current_row = (current_row - 1) % len(menu)
+            while current_row > 0 and menu[current_row] == "":
+                current_row = (current_row - 1) % len(menu)
+        elif key == curses.KEY_DOWN:
+            current_row = (current_row + 1) % len(menu)
+            while current_row < len(menu) - 1 and menu[current_row] == "":
+                current_row = (current_row + 1) % len(menu)
+        elif is_selection_key(key):
+            selected_item = menu[current_row]
+            
+            if "Import from Text Files" in selected_item:
+                import_text_files(stdscr)
+            elif "Import from Markdown Files" in selected_item:
+                import_markdown_files(stdscr)
+            elif "Import from JSON Export" in selected_item:
+                import_json_export(stdscr)
+            elif "Batch Import from Directory" in selected_item:
+                batch_import_directory(stdscr)
+            elif "Back" in selected_item:
+                break
+        elif key == 27:  # ESC
+            break
+
+def import_text_files(stdscr):
+    """Import from plain text files"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Import from Text Files")
+    safe_addstr(stdscr, 2, 0, "Text file path: ")
+    
+    file_path = input_with_prefill(stdscr, 2, 16, "")
+    if not file_path:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    if not os.path.exists(file_path):
+        safe_addstr(stdscr, 4, 0, f"File not found: {file_path}")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Create a new entry with the imported content
+        title = f"Imported from {os.path.basename(file_path)}"
+        entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, text\n\n{content}\n"
+        
+        today_file = get_today_filename()
+        append_to_daily_file(today_file, entry_content)
+        
+        safe_addstr(stdscr, 4, 0, f"✅ Import successful!")
+        safe_addstr(stdscr, 5, 0, f"Imported to: {today_file}")
+        safe_addstr(stdscr, 6, 0, f"Content length: {len(content)} characters")
+        
+    except Exception as e:
+        safe_addstr(stdscr, 4, 0, f"❌ Import failed: {str(e)}")
+    
+    safe_addstr(stdscr, 8, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def import_markdown_files(stdscr):
+    """Import from markdown files with entry detection"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Import from Markdown Files")
+    safe_addstr(stdscr, 2, 0, "Markdown file path: ")
+    
+    file_path = input_with_prefill(stdscr, 2, 20, "")
+    if not file_path:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    if not os.path.exists(file_path):
+        safe_addstr(stdscr, 4, 0, f"File not found: {file_path}")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Try to detect existing entries or import as single entry
+        entries = parse_entries_from_content(content, os.path.basename(file_path))
+        
+        if entries:
+            # Import detected entries
+            today_file = get_today_filename()
+            imported_count = 0
+            
+            for entry in entries:
+                entry_content = f"# {format_timestamp()}{entry['title']}\n\ntags: {entry['tags']}, imported\n\n{entry['content']}\n"
+                append_to_daily_file(today_file, entry_content)
+                imported_count += 1
+            
+            safe_addstr(stdscr, 4, 0, f"✅ Import successful!")
+            safe_addstr(stdscr, 5, 0, f"Imported {imported_count} entries to: {today_file}")
+        else:
+            # Import as single entry
+            title = f"Imported from {os.path.basename(file_path)}"
+            entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, markdown\n\n{content}\n"
+            
+            today_file = get_today_filename()
+            append_to_daily_file(today_file, entry_content)
+            
+            safe_addstr(stdscr, 4, 0, f"✅ Import successful!")
+            safe_addstr(stdscr, 5, 0, f"Imported to: {today_file}")
+        
+    except Exception as e:
+        safe_addstr(stdscr, 4, 0, f"❌ Import failed: {str(e)}")
+    
+    safe_addstr(stdscr, 7, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def import_json_export(stdscr):
+    """Import from JSON export format"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Import from JSON Export")
+    safe_addstr(stdscr, 2, 0, "JSON file path: ")
+    
+    file_path = input_with_prefill(stdscr, 2, 16, "")
+    if not file_path:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    if not os.path.exists(file_path):
+        safe_addstr(stdscr, 4, 0, f"File not found: {file_path}")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Import entries from JSON structure
+        imported_count = 0
+        for entry_data in data:
+            if isinstance(entry_data, dict) and 'title' in entry_data and 'content' in entry_data:
+                title = entry_data.get('title', 'Untitled')
+                content = entry_data.get('content', '')
+                tags = entry_data.get('tags', 'imported')
+                
+                entry_content = f"# {format_timestamp()}{title}\n\ntags: {tags}\n\n{content}\n"
+                
+                today_file = get_today_filename()
+                append_to_daily_file(today_file, entry_content)
+                imported_count += 1
+        
+        safe_addstr(stdscr, 4, 0, f"✅ Import successful!")
+        safe_addstr(stdscr, 5, 0, f"Imported {imported_count} entries")
+        
+    except Exception as e:
+        safe_addstr(stdscr, 4, 0, f"❌ Import failed: {str(e)}")
+    
+    safe_addstr(stdscr, 7, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def batch_import_directory(stdscr):
+    """Batch import from a directory of files"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Batch Import from Directory")
+    safe_addstr(stdscr, 2, 0, "Directory path: ")
+    
+    dir_path = input_with_prefill(stdscr, 2, 16, "")
+    if not dir_path:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    if not os.path.exists(dir_path) or not os.path.isdir(dir_path):
+        safe_addstr(stdscr, 4, 0, f"Directory not found: {dir_path}")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    try:
+        imported_files = 0
+        imported_entries = 0
+        
+        for filename in os.listdir(dir_path):
+            file_path = os.path.join(dir_path, filename)
+            if os.path.isfile(file_path) and (filename.endswith('.txt') or filename.endswith('.md')):
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    if filename.endswith('.md'):
+                        # Try to parse as entries
+                        entries = parse_entries_from_content(content, filename)
+                        if entries:
+                            for entry in entries:
+                                entry_content = f"# {format_timestamp()}{entry['title']}\n\ntags: {entry['tags']}, imported\n\n{entry['content']}\n"
+                                today_file = get_today_filename()
+                                append_to_daily_file(today_file, entry_content)
+                                imported_entries += 1
+                        else:
+                            # Import as single entry
+                            title = f"Imported from {filename}"
+                            entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, batch\n\n{content}\n"
+                            today_file = get_today_filename()
+                            append_to_daily_file(today_file, entry_content)
+                            imported_entries += 1
+                    else:
+                        # Import text file as single entry
+                        title = f"Imported from {filename}"
+                        entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, batch\n\n{content}\n"
+                        today_file = get_today_filename()
+                        append_to_daily_file(today_file, entry_content)
+                        imported_entries += 1
+                    
+                    imported_files += 1
+                    
+                except Exception:
+                    continue  # Skip files that can't be read
+        
+        safe_addstr(stdscr, 4, 0, f"✅ Batch import successful!")
+        safe_addstr(stdscr, 5, 0, f"Files processed: {imported_files}")
+        safe_addstr(stdscr, 6, 0, f"Entries imported: {imported_entries}")
+        
+    except Exception as e:
+        safe_addstr(stdscr, 4, 0, f"❌ Batch import failed: {str(e)}")
+    
+    safe_addstr(stdscr, 8, 0, "Press any key to continue...")
+    stdscr.getch()
+
+# ================== END FILE EXPORT & IMPORT FUNCTIONS ==================
+
+# ================== ADVANCED SEARCH & TAG MANAGEMENT ==================
+
+def advanced_search_menu(stdscr):
+    """Advanced search menu with multiple filter options"""
+    current_row = 0
+    menu = [
+        "Search by Date Range",
+        "Search by Tags Only",
+        "Search by Content Length",
+        "Search with Regular Expression",
+        "",
+        "Saved Searches",
+        "Search History",
+        "",
+        "Back"
+    ]
+
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "🔍 Advanced Search")
+        safe_addstr(stdscr, 1, 0, "Choose search criteria and filters")
+        
+        show_status_bar(stdscr, "Advanced search options - combine multiple filters")
+        
+        y_pos = 3
+        for idx, item in enumerate(menu):
+            if item == "":
+                y_pos += 1
+                continue
+            attr = curses.A_REVERSE if idx == current_row else 0
+            safe_addstr(stdscr, y_pos, 2, f"> {item}" if idx == current_row else f"  {item}", attr)
+            y_pos += 1
+            
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            current_row = (current_row - 1) % len(menu)
+            while current_row > 0 and menu[current_row] == "":
+                current_row = (current_row - 1) % len(menu)
+        elif key == curses.KEY_DOWN:
+            current_row = (current_row + 1) % len(menu)
+            while current_row < len(menu) - 1 and menu[current_row] == "":
+                current_row = (current_row + 1) % len(menu)
+        elif is_selection_key(key):
+            selected_item = menu[current_row]
+            
+            if "Search by Date Range" in selected_item:
+                search_by_date_range(stdscr)
+            elif "Search by Tags Only" in selected_item:
+                search_by_tags_only(stdscr)
+            elif "Search by Content Length" in selected_item:
+                search_by_content_length(stdscr)
+            elif "Search with Regular Expression" in selected_item:
+                search_with_regex(stdscr)
+            elif "Saved Searches" in selected_item:
+                saved_searches_menu(stdscr)
+            elif "Search History" in selected_item:
+                search_history_menu(stdscr)
+            elif "Back" in selected_item:
+                break
+        elif key == 27:  # ESC
+            break
+
+def search_by_date_range(stdscr):
+    """Search entries within a specific date range"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Search by Date Range")
+    safe_addstr(stdscr, 2, 0, "Start date (YYYY-MM-DD): ")
+    
+    start_date = input_with_prefill(stdscr, 2, 24, "")
+    if not start_date:
+        curses.noecho()
+        return
+    
+    safe_addstr(stdscr, 3, 0, "End date (YYYY-MM-DD): ")
+    end_date = input_with_prefill(stdscr, 3, 22, "")
+    if not end_date:
+        curses.noecho()
+        return
+    
+    safe_addstr(stdscr, 4, 0, "Search term (optional): ")
+    search_term = input_with_prefill(stdscr, 4, 24, "")
+    
+    curses.noecho()
+    
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        if start_dt > end_dt:
+            safe_addstr(stdscr, 6, 0, "Error: Start date must be before end date")
+            safe_addstr(stdscr, 7, 0, "Press any key to continue...")
+            stdscr.getch()
+            return
+    except ValueError:
+        safe_addstr(stdscr, 6, 0, "Error: Invalid date format. Use YYYY-MM-DD")
+        safe_addstr(stdscr, 7, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    # Filter entries by date range
+    all_entries = get_all_entries()
+    filtered_entries = []
+    
+    for entry in all_entries:
+        try:
+            entry_date = datetime.strptime(entry['filename'].replace('.md', ''), "%Y-%m-%d")
+            if start_dt <= entry_date <= end_dt:
+                # If search term provided, also filter by content
+                if search_term:
+                    searchable_text = f"{entry['title']} {entry['tags']} {entry['content']}".lower()
+                    if search_term.lower() in searchable_text:
+                        filtered_entries.append(entry)
+                else:
+                    filtered_entries.append(entry)
+        except ValueError:
+            continue
+    
+    display_search_results(stdscr, filtered_entries, f"Date range: {start_date} to {end_date}")
+
+def search_by_tags_only(stdscr):
+    """Search entries by tags only"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Search by Tags Only")
+    safe_addstr(stdscr, 2, 0, "Tags (comma separated): ")
+    
+    tags_input = input_with_prefill(stdscr, 2, 25, "")
+    if not tags_input:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    # Parse tags
+    target_tags = [tag.strip().lower() for tag in tags_input.split(',') if tag.strip()]
+    
+    if not target_tags:
+        safe_addstr(stdscr, 4, 0, "No valid tags specified")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    # Filter entries by tags
+    all_entries = get_all_entries()
+    filtered_entries = []
+    
+    for entry in all_entries:
+        if entry['tags']:
+            entry_tags = [tag.strip().lower() for tag in entry['tags'].split(',')]
+            # Check if any target tags match entry tags
+            if any(target_tag in entry_tags for target_tag in target_tags):
+                filtered_entries.append(entry)
+    
+    display_search_results(stdscr, filtered_entries, f"Tags: {tags_input}")
+
+def search_by_content_length(stdscr):
+    """Search entries by content length"""
+    current_row = 0
+    length_options = [
+        ("Short entries", "< 100 words"),
+        ("Medium entries", "100-500 words"),
+        ("Long entries", "> 500 words"),
+        ("Custom range", "Specify word count range")
+    ]
+    
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "Search by Content Length")
+        safe_addstr(stdscr, 1, 0, "Choose content length filter")
+        
+        for i, (name, desc) in enumerate(length_options):
+            prefix = "> " if i == current_row else "  "
+            attr = curses.A_REVERSE if i == current_row else 0
+            safe_addstr(stdscr, i+3, 2, f"{prefix}{name} - {desc}", attr)
+        
+        safe_addstr(stdscr, len(length_options)+4, 2, "ESC to go back")
+        
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            current_row = (current_row - 1) % len(length_options)
+        elif key == curses.KEY_DOWN:
+            current_row = (current_row + 1) % len(length_options)
+        elif is_selection_key(key):
+            min_words = 0
+            max_words = float('inf')
+            
+            if current_row == 0:  # Short
+                max_words = 100
+            elif current_row == 1:  # Medium
+                min_words = 100
+                max_words = 500
+            elif current_row == 2:  # Long
+                min_words = 500
+            elif current_row == 3:  # Custom
+                curses.echo()
+                stdscr.clear()
+                safe_addstr(stdscr, 0, 0, "Custom Word Count Range")
+                safe_addstr(stdscr, 2, 0, "Minimum words: ")
+                min_input = input_with_prefill(stdscr, 2, 16, "0")
+                safe_addstr(stdscr, 3, 0, "Maximum words (blank for no limit): ")
+                max_input = input_with_prefill(stdscr, 3, 33, "")
+                curses.noecho()
+                
+                try:
+                    min_words = int(min_input) if min_input else 0
+                    max_words = int(max_input) if max_input else float('inf')
+                except ValueError:
+                    safe_addstr(stdscr, 5, 0, "Invalid number format")
+                    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+                    stdscr.getch()
+                    continue
+            
+            # Filter entries by word count
+            all_entries = get_all_entries()
+            filtered_entries = []
+            
+            for entry in all_entries:
+                word_count = len(entry['content'].split())
+                if min_words <= word_count <= max_words:
+                    filtered_entries.append(entry)
+            
+            desc = length_options[current_row][1]
+            display_search_results(stdscr, filtered_entries, f"Content length: {desc}")
+            break
+        elif key == 27:  # ESC
+            break
+
+def search_with_regex(stdscr):
+    """Search entries using regular expressions"""
+    curses.echo()
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Search with Regular Expression")
+    safe_addstr(stdscr, 1, 0, "Advanced pattern matching for power users")
+    safe_addstr(stdscr, 3, 0, "Regex pattern: ")
+    
+    pattern = input_with_prefill(stdscr, 3, 16, "")
+    if not pattern:
+        curses.noecho()
+        return
+    
+    curses.noecho()
+    
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        safe_addstr(stdscr, 5, 0, f"Invalid regex pattern: {str(e)}")
+        safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    # Filter entries by regex
+    all_entries = get_all_entries()
+    filtered_entries = []
+    
+    for entry in all_entries:
+        searchable_text = f"{entry['title']} {entry['tags']} {entry['content']}"
+        if regex.search(searchable_text):
+            filtered_entries.append(entry)
+    
+    display_search_results(stdscr, filtered_entries, f"Regex: {pattern}")
+
+def display_search_results(stdscr, entries, search_description):
+    """Display search results with common interface"""
+    if not entries:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, f"No entries found")
+        safe_addstr(stdscr, 1, 0, f"Search: {search_description}")
+        show_status_bar(stdscr, "No matches found")
+        safe_addstr(stdscr, 3, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    idx = 0
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, f"Search Results ({len(entries)} found)")
+        safe_addstr(stdscr, 1, 0, f"Search: {search_description}")
+        safe_addstr(stdscr, 2, 0, "Enter/Space to read, E to edit, C to copy, ESC to go back")
+        
+        # Show preview of selected entry
+        if idx < len(entries):
+            selected_entry = entries[idx]
+            preview = selected_entry['content'][:100].replace('\n', ' ')
+            show_status_bar(stdscr, f"Preview: {preview}...")
+        
+        for i, entry in enumerate(entries):
+            display_name = get_entry_display_name(entry)
+            prefix = "> " if i == idx else "  "
+            attr = curses.A_REVERSE if i == idx else 0
+            
+            safe_addstr(stdscr, i+4, 0, f"{prefix}{display_name}", attr)
+        
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            idx = (idx - 1) % len(entries)
+        elif key == curses.KEY_DOWN:
+            idx = (idx + 1) % len(entries)
+        elif is_selection_key(key):
+            selected_entry = entries[idx]
+            display_entry_content(stdscr, selected_entry)
+        elif key == ord('e') or key == ord('E'):
+            selected_entry = entries[idx]
+            edit_entry(stdscr, selected_entry)
+        elif key == ord('c') or key == ord('C'):
+            selected_entry = entries[idx]
+            entry_text = f"# {selected_entry['title']}\n\ntags: {selected_entry['tags']}\n\n{selected_entry['content']}"
+            if copy_entry_to_clipboard(entry_text):
+                show_status_bar(stdscr, "Entry copied to clipboard!")
+                time.sleep(1)
+        elif key == 27:  # ESC
+            break
+
+def saved_searches_menu(stdscr):
+    """Manage saved searches"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Saved Searches")
+    safe_addstr(stdscr, 1, 0, "Feature coming soon...")
+    safe_addstr(stdscr, 3, 0, "This will allow you to save frequently used search queries")
+    safe_addstr(stdscr, 4, 0, "and access them quickly.")
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def search_history_menu(stdscr):
+    """View search history"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Search History")
+    safe_addstr(stdscr, 1, 0, "Feature coming soon...")
+    safe_addstr(stdscr, 3, 0, "This will show your recent search queries")
+    safe_addstr(stdscr, 4, 0, "for quick re-use.")
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def tag_management_menu(stdscr):
+    """Tag management and organization"""
+    current_row = 0
+    menu = [
+        "View All Tags",
+        "Rename Tag", 
+        "Merge Tags",
+        "Delete Unused Tags",
+        "",
+        "Tag Statistics",
+        "Most Used Tags",
+        "",
+        "Back"
+    ]
+
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "🏷️  Tag Management")
+        safe_addstr(stdscr, 1, 0, "Organize and manage your journal tags")
+        
+        show_status_bar(stdscr, "Tag management tools")
+        
+        y_pos = 3
+        for idx, item in enumerate(menu):
+            if item == "":
+                y_pos += 1
+                continue
+            attr = curses.A_REVERSE if idx == current_row else 0
+            safe_addstr(stdscr, y_pos, 2, f"> {item}" if idx == current_row else f"  {item}", attr)
+            y_pos += 1
+            
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP:
+            current_row = (current_row - 1) % len(menu)
+            while current_row > 0 and menu[current_row] == "":
+                current_row = (current_row - 1) % len(menu)
+        elif key == curses.KEY_DOWN:
+            current_row = (current_row + 1) % len(menu)
+            while current_row < len(menu) - 1 and menu[current_row] == "":
+                current_row = (current_row + 1) % len(menu)
+        elif is_selection_key(key):
+            selected_item = menu[current_row]
+            
+            if "View All Tags" in selected_item:
+                view_all_tags(stdscr)
+            elif "Rename Tag" in selected_item:
+                rename_tag(stdscr)
+            elif "Merge Tags" in selected_item:
+                merge_tags(stdscr)
+            elif "Delete Unused Tags" in selected_item:
+                delete_unused_tags(stdscr)
+            elif "Tag Statistics" in selected_item:
+                show_tag_statistics(stdscr)
+            elif "Most Used Tags" in selected_item:
+                show_most_used_tags(stdscr)
+            elif "Back" in selected_item:
+                break
+        elif key == 27:  # ESC
+            break
+
+def get_all_tags():
+    """Get all unique tags from all entries"""
+    all_entries = get_all_entries()
+    tags = set()
+    
+    for entry in all_entries:
+        if entry['tags']:
+            entry_tags = [tag.strip() for tag in entry['tags'].split(',') if tag.strip()]
+            tags.update(entry_tags)
+    
+    return sorted(list(tags))
+
+def view_all_tags(stdscr):
+    """Display all tags in the journal"""
+    all_tags = get_all_tags()
+    
+    if not all_tags:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "No tags found in journal")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    height, width = stdscr.getmaxyx()
+    start_line = 0
+    content_height = height - 4
+    
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, f"All Tags ({len(all_tags)} total)")
+        safe_addstr(stdscr, 1, 0, "↑/↓ to scroll, ESC to go back")
+        
+        # Display visible tags
+        for i in range(content_height):
+            if start_line + i < len(all_tags):
+                tag = all_tags[start_line + i]
+                safe_addstr(stdscr, i + 3, 2, f"• {tag}")
+        
+        # Show scroll indicators
+        if start_line > 0:
+            safe_addstr(stdscr, 2, width - 3, "↑")
+        if start_line + content_height < len(all_tags):
+            safe_addstr(stdscr, height - 1, width - 3, "↓")
+        
+        show_status_bar(stdscr, f"Tag {start_line + 1}-{min(start_line + content_height, len(all_tags))} of {len(all_tags)}")
+        
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP and start_line > 0:
+            start_line -= 1
+        elif key == curses.KEY_DOWN and start_line + content_height < len(all_tags):
+            start_line += 1
+        elif key == curses.KEY_PPAGE:
+            start_line = max(0, start_line - content_height)
+        elif key == curses.KEY_NPAGE:
+            start_line = min(len(all_tags) - content_height, start_line + content_height)
+        elif key == 27:  # ESC
+            break
+
+def rename_tag(stdscr):
+    """Rename a tag across all entries"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Rename Tag")
+    safe_addstr(stdscr, 1, 0, "Feature coming soon...")
+    safe_addstr(stdscr, 3, 0, "This will allow you to rename a tag across all entries")
+    safe_addstr(stdscr, 4, 0, "that use it.")
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def merge_tags(stdscr):
+    """Merge multiple tags into one"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Merge Tags")
+    safe_addstr(stdscr, 1, 0, "Feature coming soon...")
+    safe_addstr(stdscr, 3, 0, "This will allow you to merge multiple tags into one")
+    safe_addstr(stdscr, 4, 0, "across all entries.")
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def delete_unused_tags(stdscr):
+    """Delete tags that are no longer used"""
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Delete Unused Tags")
+    safe_addstr(stdscr, 1, 0, "Feature coming soon...")
+    safe_addstr(stdscr, 3, 0, "This will find and remove tags that are no longer")
+    safe_addstr(stdscr, 4, 0, "used in any entries.")
+    safe_addstr(stdscr, 6, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def show_tag_statistics(stdscr):
+    """Show statistics about tag usage"""
+    all_entries = get_all_entries()
+    tag_counts = {}
+    
+    for entry in all_entries:
+        if entry['tags']:
+            entry_tags = [tag.strip() for tag in entry['tags'].split(',') if tag.strip()]
+            for tag in entry_tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    
+    if not tag_counts:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "No tags found in journal")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    stdscr.clear()
+    safe_addstr(stdscr, 0, 0, "Tag Statistics")
+    
+    y_pos = 2
+    safe_addstr(stdscr, y_pos, 0, f"Total unique tags: {len(tag_counts)}")
+    y_pos += 1
+    safe_addstr(stdscr, y_pos, 0, f"Total tag uses: {sum(tag_counts.values())}")
+    y_pos += 1
+    safe_addstr(stdscr, y_pos, 0, f"Average tags per entry: {sum(tag_counts.values()) / len(all_entries):.1f}")
+    y_pos += 2
+    
+    # Show top 10 most used tags
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    safe_addstr(stdscr, y_pos, 0, "Top 10 Most Used Tags:")
+    y_pos += 1
+    
+    for i, (tag, count) in enumerate(sorted_tags):
+        safe_addstr(stdscr, y_pos, 2, f"{i+1}. {tag} ({count} uses)")
+        y_pos += 1
+    
+    safe_addstr(stdscr, y_pos + 2, 0, "Press any key to continue...")
+    stdscr.getch()
+
+def show_most_used_tags(stdscr):
+    """Show most frequently used tags"""
+    all_entries = get_all_entries()
+    tag_counts = {}
+    
+    for entry in all_entries:
+        if entry['tags']:
+            entry_tags = [tag.strip() for tag in entry['tags'].split(',') if tag.strip()]
+            for tag in entry_tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    
+    if not tag_counts:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, "No tags found in journal")
+        safe_addstr(stdscr, 2, 0, "Press any key to continue...")
+        stdscr.getch()
+        return
+    
+    # Sort by usage count
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    
+    height, width = stdscr.getmaxyx()
+    start_line = 0
+    content_height = height - 4
+    
+    while True:
+        stdscr.clear()
+        safe_addstr(stdscr, 0, 0, f"Most Used Tags ({len(sorted_tags)} total)")
+        safe_addstr(stdscr, 1, 0, "↑/↓ to scroll, ESC to go back")
+        
+        # Display visible tags
+        for i in range(content_height):
+            if start_line + i < len(sorted_tags):
+                tag, count = sorted_tags[start_line + i]
+                safe_addstr(stdscr, i + 3, 2, f"{start_line + i + 1}. {tag} ({count} uses)")
+        
+        # Show scroll indicators
+        if start_line > 0:
+            safe_addstr(stdscr, 2, width - 3, "↑")
+        if start_line + content_height < len(sorted_tags):
+            safe_addstr(stdscr, height - 1, width - 3, "↓")
+        
+        show_status_bar(stdscr, f"Tag {start_line + 1}-{min(start_line + content_height, len(sorted_tags))} of {len(sorted_tags)}")
+        
+        key = stdscr.getch()
+        
+        if key == curses.KEY_UP and start_line > 0:
+            start_line -= 1
+        elif key == curses.KEY_DOWN and start_line + content_height < len(sorted_tags):
+            start_line += 1
+        elif key == curses.KEY_PPAGE:
+            start_line = max(0, start_line - content_height)
+        elif key == curses.KEY_NPAGE:
+            start_line = min(len(sorted_tags) - content_height, start_line + content_height)
+        elif key == 27:  # ESC
+            break
+
+# ================== END ADVANCED SEARCH & TAG MANAGEMENT ==================
 
 def get_entry_templates():
     """Get available entry templates"""
@@ -1719,9 +3045,14 @@ def main_menu(stdscr):
         "✏️  Edit Daily File",
         "",
         "🔍 Search Entries [Ctrl+F]",
+        "🔍 Advanced Search",
         "📊 Journal Statistics",
         "",
+        "📤 Export Entries",
+        "📥 Import Entries",
+        "",
         "📋 View Templates",
+        "🏷️  Tag Management",
         "",
         "💾 Create Backup [Ctrl+B]",
         "⚙️  Settings [Ctrl+S]",
@@ -1815,10 +3146,18 @@ def main_menu(stdscr):
                 select_daily_file(stdscr, "Edit")
             elif "Search Entries" in selected_item:
                 search_entries(stdscr)
+            elif "Advanced Search" in selected_item:
+                advanced_search_menu(stdscr)
             elif "Journal Statistics" in selected_item:
                 show_statistics(stdscr)
+            elif "Export Entries" in selected_item:
+                export_entries_menu(stdscr)
+            elif "Import Entries" in selected_item:
+                import_entries_menu(stdscr)
             elif "View Templates" in selected_item:
                 view_templates(stdscr)
+            elif "Tag Management" in selected_item:
+                tag_management_menu(stdscr)
             elif "Create Backup" in selected_item:
                 manual_backup(stdscr)
             elif "Settings" in selected_item:
