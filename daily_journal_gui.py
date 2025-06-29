@@ -124,6 +124,60 @@ def format_timestamp():
     """Get formatted timestamp for entries"""
     return datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
 
+class ResponsiveButton(ttk.Button):
+    """Enhanced button with better responsiveness on macOS"""
+    
+    def __init__(self, parent, **kwargs):
+        # Extract command before calling parent constructor
+        self._command = kwargs.pop('command', None)
+        
+        # Set better default styling
+        kwargs.setdefault('padding', (10, 6))
+        kwargs.setdefault('style', 'Accent.TButton')
+        
+        super().__init__(parent, **kwargs)
+        
+        # Bind multiple events for better responsiveness on macOS
+        self.bind('<Button-1>', self._on_click)
+        self.bind('<ButtonRelease-1>', self._on_click)
+        self.bind('<Return>', self._on_click)
+        self.bind('<space>', self._on_click)
+        self.bind('<Key>', self._on_key)
+        
+        # macOS-specific improvements
+        if platform.system() == "Darwin":
+            self.configure(style='Accent.TButton')
+            # Additional macOS-specific bindings
+            self.bind('<Button-3>', self._on_click)  # Right click
+            self.bind('<Double-Button-1>', self._on_click)  # Double click
+        
+        # Override the command configuration to ensure our command is always used
+        if self._command:
+            self.configure(command=self._command)
+    
+    def _on_click(self, event):
+        """Handle click events with immediate feedback"""
+        # Force update to show button press
+        self.update_idletasks()
+        if self._command:
+            self._command()
+    
+    def _on_key(self, event):
+        """Handle keyboard events"""
+        if event.keysym in ['Return', 'space']:
+            self._on_click(event)
+    
+    def invoke(self):
+        """Override invoke to ensure command is called"""
+        if self._command:
+            self._command()
+    
+    def configure(self, **kwargs):
+        """Override configure to ensure command is preserved"""
+        if 'command' in kwargs:
+            self._command = kwargs['command']
+        super().configure(**kwargs)
+
 class EntryDialog:
     """Dialog for creating/editing journal entries"""
     
@@ -134,6 +188,12 @@ class EntryDialog:
         self.window.geometry("800x600")
         self.window.transient(parent)
         self.window.grab_set()
+        
+        # macOS-specific window setup
+        if platform.system() == "Darwin":
+            self.window.attributes('-topmost', True)
+            self.window.update_idletasks()
+            self.window.attributes('-topmost', False)
         
         # Center the window
         self.window.update_idletasks()
@@ -146,7 +206,7 @@ class EntryDialog:
     def create_widgets(self, entry_title, tags, content):
         # Main frame
         main_frame = ttk.Frame(self.window, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=0, column=0, sticky="nsew")
         
         # Configure grid weights
         self.window.columnconfigure(0, weight=1)
@@ -155,19 +215,19 @@ class EntryDialog:
         main_frame.rowconfigure(3, weight=1)
         
         # Title field
-        ttk.Label(main_frame, text="Title:").grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Title:").grid(row=0, column=0, sticky="w", pady=(0, 5))
         self.title_var = tk.StringVar(value=entry_title or f"{format_timestamp()}")
         self.title_entry = ttk.Entry(main_frame, textvariable=self.title_var, font=("Consolas", 10))
-        self.title_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        self.title_entry.grid(row=0, column=1, sticky="ew", pady=(0, 5))
         
         # Tags field
-        ttk.Label(main_frame, text="Tags:").grid(row=1, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Tags:").grid(row=1, column=0, sticky="w", pady=(0, 5))
         self.tags_var = tk.StringVar(value=tags)
         self.tags_entry = ttk.Entry(main_frame, textvariable=self.tags_var, font=("Consolas", 10))
-        self.tags_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        self.tags_entry.grid(row=1, column=1, sticky="ew", pady=(0, 5))
         
         # Content area label
-        ttk.Label(main_frame, text="Content:").grid(row=2, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Content:").grid(row=2, column=0, sticky="w", pady=(0, 5))
         
         # Content text area
         self.content_text = scrolledtext.ScrolledText(
@@ -177,17 +237,20 @@ class EntryDialog:
             undo=True,
             maxundo=50
         )
-        self.content_text.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        self.content_text.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(0, 10))
         self.content_text.insert(tk.END, content)
         
         # Button frame
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E))
+        button_frame.grid(row=4, column=0, columnspan=2, sticky="ew")
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
         
-        # Buttons
-        ttk.Button(button_frame, text="Save", command=self.save_entry).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="Auto-Detect Tags", command=self.auto_detect_tags).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="Cancel", command=self.cancel).pack(side=tk.RIGHT)
+        # Buttons with enhanced responsiveness and proper sizing
+        ResponsiveButton(button_frame, text="Save", command=self.save_entry).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        ResponsiveButton(button_frame, text="Auto-Detect Tags", command=self.auto_detect_tags).grid(row=0, column=1, sticky="ew", padx=(0, 5))
+        ResponsiveButton(button_frame, text="Cancel", command=self.cancel).grid(row=0, column=2, sticky="ew")
         
         # Focus on content area
         self.content_text.focus_set()
@@ -222,7 +285,7 @@ class EntryDialog:
             messagebox.showinfo("No Tags Found", "No tags detected in content.")
     
     def save_entry(self):
-        """Save the entry"""
+        """Save the entry with automatic tag detection"""
         title = self.title_var.get().strip()
         tags = self.tags_var.get().strip()
         content = self.content_text.get(1.0, tk.END).strip()
@@ -230,10 +293,29 @@ class EntryDialog:
         if not title:
             messagebox.showerror("Error", "Please enter a title.")
             return
+        
+        # Auto-detect tags automatically on save
+        detected_tags = extract_tags_from_content(content)
+        if detected_tags:
+            if tags:
+                # Merge tags
+                existing_tags = [tag.strip().lower() for tag in tags.split(',') if tag.strip()]
+                all_tags = existing_tags + detected_tags
+                unique_tags = []
+                seen = set()
+                for tag in all_tags:
+                    if tag not in seen:
+                        unique_tags.append(tag)
+                        seen.add(tag)
+                final_tags = ", ".join(unique_tags)
+            else:
+                final_tags = ", ".join(detected_tags)
+        else:
+            final_tags = tags
             
         self.result = {
             'title': title,
-            'tags': tags,
+            'tags': final_tags,
             'content': content
         }
         self.window.destroy()
@@ -253,6 +335,12 @@ class SearchDialog:
         self.window.transient(parent)
         self.window.grab_set()
         
+        # macOS-specific window setup
+        if platform.system() == "Darwin":
+            self.window.attributes('-topmost', True)
+            self.window.update_idletasks()
+            self.window.attributes('-topmost', False)
+        
         # Center the window
         self.window.update_idletasks()
         x = (self.window.winfo_screenwidth() // 2) - (700 // 2)
@@ -264,7 +352,7 @@ class SearchDialog:
         
     def create_widgets(self):
         main_frame = ttk.Frame(self.window, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=0, column=0, sticky="nsew")
         
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(0, weight=1)
@@ -272,22 +360,22 @@ class SearchDialog:
         main_frame.rowconfigure(2, weight=1)
         
         # Search field
-        ttk.Label(main_frame, text="Search:").grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        ttk.Label(main_frame, text="Search:").grid(row=0, column=0, sticky="w", pady=(0, 10))
         self.search_var = tk.StringVar()
         search_entry = ttk.Entry(main_frame, textvariable=self.search_var, font=("Consolas", 10))
-        search_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), pady=(0, 10))
+        search_entry.grid(row=0, column=1, sticky="ew", pady=(0, 10))
         search_entry.bind('<Return>', lambda e: self.perform_search())
         
         # Search button
-        ttk.Button(main_frame, text="Search", command=self.perform_search).grid(row=0, column=2, padx=(5, 0), pady=(0, 10))
+        ResponsiveButton(main_frame, text="Search", command=self.perform_search).grid(row=0, column=2, padx=(5, 0), pady=(0, 10))
         
         # Results label
         self.results_label = ttk.Label(main_frame, text="Enter search term and press Search")
-        self.results_label.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+        self.results_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 5))
         
         # Results listbox with scrollbar
         list_frame = ttk.Frame(main_frame)
-        list_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
+        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew")
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
         
@@ -295,8 +383,8 @@ class SearchDialog:
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.results_listbox.yview)
         self.results_listbox.configure(yscrollcommand=scrollbar.set)
         
-        self.results_listbox.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.results_listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
         
         # Double-click to view
         self.results_listbox.bind('<Double-Button-1>', lambda e: self.view_selected())
@@ -305,8 +393,8 @@ class SearchDialog:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=3, column=0, columnspan=3, pady=(10, 0))
         
-        ttk.Button(button_frame, text="View Entry", command=self.view_selected).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="Close", command=self.close).pack(side=tk.RIGHT)
+        ResponsiveButton(button_frame, text="View Entry", command=self.view_selected).pack(side=tk.LEFT, padx=(0, 5))
+        ResponsiveButton(button_frame, text="Close", command=self.close).pack(side=tk.RIGHT)
         
         # Focus on search entry
         search_entry.focus_set()
@@ -359,7 +447,11 @@ class SearchDialog:
             if line.strip().startswith('# '):
                 # Save previous entry
                 if current_entry:
-                    current_entry['content'] = '\n'.join(current_content).strip()
+                    # Extract tags from the end of content
+                    content_text = '\n'.join(current_content).strip()
+                    tags = self.extract_tags_from_end_of_content(content_text)
+                    current_entry['content'] = content_text
+                    current_entry['tags'] = tags
                     entries.append(current_entry)
                 
                 # Start new entry
@@ -373,17 +465,55 @@ class SearchDialog:
                 }
                 current_content = []
                 
-            elif current_entry and line.strip().startswith('tags:'):
-                current_entry['tags'] = line[5:].strip()
             elif current_entry:
                 current_content.append(line)
         
         # Add the last entry
         if current_entry:
-            current_entry['content'] = '\n'.join(current_content).strip()
+            # Extract tags from the end of content
+            content_text = '\n'.join(current_content).strip()
+            tags = self.extract_tags_from_end_of_content(content_text)
+            current_entry['content'] = content_text
+            current_entry['tags'] = tags
             entries.append(current_entry)
         
         return entries
+    
+    def extract_tags_from_end_of_content(self, content):
+        """Extract tags from the end of content in @tag format"""
+        if not content:
+            return ""
+        
+        lines = content.split('\n')
+        tags = []
+        
+        # Look for @tags at the end of the content
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check if this line contains @tags
+            words = line.split()
+            line_tags = []
+            for word in words:
+                if word.startswith('@'):
+                    tag = word[1:].rstrip('.,;:!?')
+                    if tag and any(c.isalnum() for c in tag):
+                        line_tags.append(tag.lower())
+            
+            if line_tags:
+                # Found tags, add them and stop looking
+                tags.extend(reversed(line_tags))  # Reverse to maintain order
+                break
+            elif line.startswith('#'):
+                # Found a header, stop looking
+                break
+            else:
+                # This line doesn't contain tags, stop looking
+                break
+        
+        return ", ".join(reversed(tags))  # Reverse again to get original order
     
     def view_selected(self):
         """View the selected search result"""
@@ -411,6 +541,12 @@ class SettingsDialog:
         self.window.transient(parent)
         self.window.grab_set()
         
+        # macOS-specific window setup
+        if platform.system() == "Darwin":
+            self.window.attributes('-topmost', True)
+            self.window.update_idletasks()
+            self.window.attributes('-topmost', False)
+        
         # Center the window
         self.window.update_idletasks()
         x = (self.window.winfo_screenwidth() // 2) - (500 // 2)
@@ -421,7 +557,7 @@ class SettingsDialog:
         
     def create_widgets(self):
         main_frame = ttk.Frame(self.window, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=0, column=0, sticky="nsew")
         
         self.window.columnconfigure(0, weight=1)
         self.window.rowconfigure(0, weight=1)
@@ -430,60 +566,60 @@ class SettingsDialog:
         row = 0
         
         # Journal Directory
-        ttk.Label(main_frame, text="Journal Directory:").grid(row=row, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Journal Directory:").grid(row=row, column=0, sticky="w", pady=(0, 5))
         self.journal_dir_var = tk.StringVar(value=self.settings["journal_directory"])
         dir_frame = ttk.Frame(main_frame)
-        dir_frame.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        dir_frame.grid(row=row, column=1, sticky="ew", pady=(0, 5))
         dir_frame.columnconfigure(0, weight=1)
-        ttk.Entry(dir_frame, textvariable=self.journal_dir_var, font=("Consolas", 9)).grid(row=0, column=0, sticky=(tk.W, tk.E))
-        ttk.Button(dir_frame, text="Browse", command=self.browse_journal_dir).grid(row=0, column=1, padx=(5, 0))
+        ttk.Entry(dir_frame, textvariable=self.journal_dir_var, font=("Consolas", 9)).grid(row=0, column=0, sticky="ew")
+        ResponsiveButton(dir_frame, text="Browse", command=self.browse_journal_dir).grid(row=0, column=1, padx=(5, 0))
         row += 1
         
         # Date Format
-        ttk.Label(main_frame, text="Date Format:").grid(row=row, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Date Format:").grid(row=row, column=0, sticky="w", pady=(0, 5))
         self.date_format_var = tk.StringVar(value=self.settings["date_format"])
-        ttk.Entry(main_frame, textvariable=self.date_format_var, font=("Consolas", 9)).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        ttk.Entry(main_frame, textvariable=self.date_format_var, font=("Consolas", 9)).grid(row=row, column=1, sticky="ew", pady=(0, 5))
         row += 1
         
         # Font Settings
-        ttk.Label(main_frame, text="Font Family:").grid(row=row, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Font Family:").grid(row=row, column=0, sticky="w", pady=(0, 5))
         self.font_family_var = tk.StringVar(value=self.settings["font_family"])
         font_combo = ttk.Combobox(main_frame, textvariable=self.font_family_var, 
                                  values=["Consolas", "Courier New", "Arial", "Times New Roman"])
-        font_combo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        font_combo.grid(row=row, column=1, sticky="ew", pady=(0, 5))
         row += 1
         
-        ttk.Label(main_frame, text="Font Size:").grid(row=row, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Font Size:").grid(row=row, column=0, sticky="w", pady=(0, 5))
         self.font_size_var = tk.StringVar(value=str(self.settings["font_size"]))
-        ttk.Entry(main_frame, textvariable=self.font_size_var, font=("Consolas", 9)).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        ttk.Entry(main_frame, textvariable=self.font_size_var, font=("Consolas", 9)).grid(row=row, column=1, sticky="ew", pady=(0, 5))
         row += 1
         
         # Tag Prefixes
-        ttk.Label(main_frame, text="Tag Prefixes:").grid(row=row, column=0, sticky=tk.W, pady=(0, 5))
+        ttk.Label(main_frame, text="Tag Prefixes:").grid(row=row, column=0, sticky="w", pady=(0, 5))
         self.tag_prefixes_var = tk.StringVar(value=", ".join(self.settings["tag_prefixes"]))
-        ttk.Entry(main_frame, textvariable=self.tag_prefixes_var, font=("Consolas", 9)).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=(0, 5))
+        ttk.Entry(main_frame, textvariable=self.tag_prefixes_var, font=("Consolas", 9)).grid(row=row, column=1, sticky="ew", pady=(0, 5))
         row += 1
         
         # Checkboxes
         self.auto_detect_tags_var = tk.BooleanVar(value=self.settings["auto_detect_tags"])
-        ttk.Checkbutton(main_frame, text="Auto-detect tags", variable=self.auto_detect_tags_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+        ttk.Checkbutton(main_frame, text="Auto-detect tags", variable=self.auto_detect_tags_var).grid(row=row, column=0, columnspan=2, sticky="w", pady=(5, 0))
         row += 1
         
         self.merge_detected_tags_var = tk.BooleanVar(value=self.settings["merge_detected_tags"])
-        ttk.Checkbutton(main_frame, text="Merge detected tags with existing", variable=self.merge_detected_tags_var).grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        ttk.Checkbutton(main_frame, text="Merge detected tags with existing", variable=self.merge_detected_tags_var).grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
         
         self.auto_backup_var = tk.BooleanVar(value=self.settings["auto_backup"])
-        ttk.Checkbutton(main_frame, text="Auto backup", variable=self.auto_backup_var).grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        ttk.Checkbutton(main_frame, text="Auto backup", variable=self.auto_backup_var).grid(row=row, column=0, columnspan=2, sticky="w")
         row += 1
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=row+1, column=0, columnspan=2, pady=(20, 0))
         
-        ttk.Button(button_frame, text="Save", command=self.save_settings).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="Reset to Defaults", command=self.reset_to_defaults).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="Cancel", command=self.cancel).pack(side=tk.RIGHT)
+        ResponsiveButton(button_frame, text="Save", command=self.save_settings).pack(side=tk.LEFT, padx=(0, 5))
+        ResponsiveButton(button_frame, text="Reset to Defaults", command=self.reset_to_defaults).pack(side=tk.LEFT, padx=(0, 5))
+        ResponsiveButton(button_frame, text="Cancel", command=self.cancel).pack(side=tk.RIGHT)
     
     def browse_journal_dir(self):
         """Browse for journal directory"""
@@ -535,6 +671,12 @@ class DailyJournalGUI:
         self.root = tk.Tk()
         self.root.title("Daily Journal")
         self.settings = load_settings()
+        
+        # macOS-specific setup
+        if platform.system() == "Darwin":
+            # Configure macOS-specific settings
+            self.root.tk.call('tk', 'scaling', 2.0)  # Better scaling for Retina displays
+            self.root.attributes('-alpha', 0.95)  # Slight transparency for modern look
         
         # Set window size from settings
         width = self.settings.get("window_width", 900)
@@ -594,7 +736,7 @@ class DailyJournalGUI:
         """Create the main application widgets"""
         # Main frame with padding
         main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=0, column=0, sticky="nsew")
         
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
@@ -604,7 +746,7 @@ class DailyJournalGUI:
         
         # Left panel - file list
         left_frame = ttk.LabelFrame(main_frame, text="Journal Files", padding="5")
-        left_frame.grid(row=0, column=0, rowspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10))
+        left_frame.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 10))
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(1, weight=1)
         
@@ -613,33 +755,45 @@ class DailyJournalGUI:
         file_scrollbar = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.file_listbox.yview)
         self.file_listbox.configure(yscrollcommand=file_scrollbar.set)
         
-        self.file_listbox.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        file_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        self.file_listbox.grid(row=1, column=0, sticky="nsew")
+        file_scrollbar.grid(row=1, column=1, sticky="ns")
         
         # File list buttons
         file_button_frame = ttk.Frame(left_frame)
-        file_button_frame.grid(row=2, column=0, columnspan=2, pady=(5, 0))
+        file_button_frame.grid(row=2, column=0, columnspan=2, pady=(8, 0))
+        file_button_frame.columnconfigure(0, weight=1)
+        file_button_frame.columnconfigure(1, weight=1)
+        file_button_frame.columnconfigure(2, weight=1)
         
-        ttk.Button(file_button_frame, text="View", command=self.view_selected_file).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(file_button_frame, text="Edit", command=self.edit_selected_file).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(file_button_frame, text="Refresh", command=self.refresh_file_list).pack(side=tk.LEFT)
+        ResponsiveButton(file_button_frame, text="View", command=self.view_selected_file).grid(row=0, column=0, sticky="ew", padx=(0, 4), ipady=4)
+        ResponsiveButton(file_button_frame, text="Edit", command=self.edit_selected_file).grid(row=0, column=1, sticky="ew", padx=(0, 4), ipady=4)
+        ResponsiveButton(file_button_frame, text="Refresh", command=self.refresh_file_list).grid(row=0, column=2, sticky="ew", ipady=4)
         
         # Bind double-click to view file
         self.file_listbox.bind('<Double-Button-1>', lambda e: self.view_selected_file())
         
         # Right panel - quick actions
-        right_frame = ttk.LabelFrame(main_frame, text="Quick Actions", padding="5")
-        right_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N), pady=(0, 10))
+        right_frame = ttk.LabelFrame(main_frame, text="Quick Actions", padding="8")
+        right_frame.grid(row=0, column=1, sticky="ewn", pady=(0, 10))
+        right_frame.columnconfigure(0, weight=1)
         
-        # Action buttons
-        ttk.Button(right_frame, text="📝 New Entry", command=self.new_entry, width=20).pack(pady=2, fill=tk.X)
-        ttk.Button(right_frame, text="✏️ Edit Today", command=self.edit_today, width=20).pack(pady=2, fill=tk.X)
-        ttk.Button(right_frame, text="🔍 Search", command=self.search_entries, width=20).pack(pady=2, fill=tk.X)
-        ttk.Button(right_frame, text="⚙️ Settings", command=self.show_settings, width=20).pack(pady=2, fill=tk.X)
+        # Action buttons with enhanced responsiveness and proper sizing
+        # Use larger, more prominent buttons with better styling
+        new_entry_btn = ResponsiveButton(right_frame, text="📝 New Entry", command=self.new_entry)
+        new_entry_btn.grid(row=0, column=0, sticky="ew", pady=(0, 4), ipady=6)
+        
+        edit_today_btn = ResponsiveButton(right_frame, text="✏️ Edit Today", command=self.edit_today)
+        edit_today_btn.grid(row=1, column=0, sticky="ew", pady=(0, 4), ipady=6)
+        
+        search_btn = ResponsiveButton(right_frame, text="🔍 Search", command=self.search_entries)
+        search_btn.grid(row=2, column=0, sticky="ew", pady=(0, 4), ipady=6)
+        
+        settings_btn = ResponsiveButton(right_frame, text="⚙️ Settings", command=self.show_settings)
+        settings_btn.grid(row=3, column=0, sticky="ew", pady=(0, 4), ipady=6)
         
         # Status area
         status_frame = ttk.LabelFrame(main_frame, text="Status", padding="5")
-        status_frame.grid(row=1, column=1, sticky=(tk.W, tk.E, tk.N, tk.S))
+        status_frame.grid(row=1, column=1, sticky="nsew")
         status_frame.columnconfigure(0, weight=1)
         status_frame.rowconfigure(0, weight=1)
         
@@ -649,7 +803,7 @@ class DailyJournalGUI:
             font=("Consolas", 9),
             state=tk.DISABLED
         )
-        self.status_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.status_text.grid(row=0, column=0, sticky="nsew")
         
         self.update_status()
     
@@ -710,22 +864,25 @@ class DailyJournalGUI:
         if dialog.result:
             entry_data = dialog.result
             
-            # Auto-detect tags if enabled
+            # Only use explicitly entered tags, not auto-detected ones
             if self.settings.get("auto_detect_tags", True):
                 detected_tags = extract_tags_from_content(entry_data['content'])
-                if detected_tags and self.settings.get("merge_detected_tags", True):
-                    existing_tags = [tag.strip() for tag in entry_data['tags'].split(',') if tag.strip()]
-                    all_tags = existing_tags + detected_tags
-                    unique_tags = []
-                    seen = set()
-                    for tag in all_tags:
-                        if tag.lower() not in seen:
-                            unique_tags.append(tag)
-                            seen.add(tag.lower())
-                    entry_data['tags'] = ", ".join(unique_tags)
+                if detected_tags:
+                    # Show tag detection feedback but don't merge them
+                    messagebox.showinfo("Tags Detected", 
+                        f"Auto-detected tags in content: {', '.join(detected_tags)}\n"
+                        f"Explicitly entered tags: {entry_data['tags']}\n"
+                        f"Note: Auto-detected tags remain in content, only explicit tags appear at bottom.")
             
-            # Format entry content
-            entry_content = f"# {entry_data['title']}\n\ntags: {entry_data['tags']}\n\n{entry_data['content']}\n"
+            # Format entry content with only explicitly entered tags at the end
+            entry_content = f"# {entry_data['title']}\n\n{entry_data['content']}"
+            if entry_data['tags']:
+                # Convert comma-separated tags to @tag format
+                tag_list = [tag.strip() for tag in entry_data['tags'].split(',') if tag.strip()]
+                if tag_list:
+                    entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
+            
+            entry_content += "\n"
             
             # Save to today's file
             today_file = get_today_filename()
@@ -775,6 +932,12 @@ class DailyJournalGUI:
         window.title(f"{'View' if readonly else 'Edit'} - {filename}")
         window.geometry("800x600")
         
+        # macOS-specific window setup
+        if platform.system() == "Darwin":
+            window.attributes('-topmost', True)
+            window.update_idletasks()
+            window.attributes('-topmost', False)
+        
         # Center the window
         window.update_idletasks()
         x = (window.winfo_screenwidth() // 2) - (800 // 2)
@@ -782,7 +945,7 @@ class DailyJournalGUI:
         window.geometry(f"800x600+{x}+{y}")
         
         main_frame = ttk.Frame(window, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.grid(row=0, column=0, sticky="nsew")
         
         window.columnconfigure(0, weight=1)
         window.rowconfigure(0, weight=1)
@@ -798,7 +961,7 @@ class DailyJournalGUI:
             maxundo=50,
             state=tk.DISABLED if readonly else tk.NORMAL
         )
-        text_widget.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        text_widget.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
         
         # Insert content
         if readonly:
@@ -818,10 +981,10 @@ class DailyJournalGUI:
                 messagebox.showinfo("Success", f"File {filename} saved successfully!")
                 self.refresh_file_list()
             
-            ttk.Button(button_frame, text="Save", command=save_file).pack(side=tk.LEFT, padx=(0, 5))
+            ResponsiveButton(button_frame, text="Save", command=save_file).pack(side=tk.LEFT, padx=(0, 5))
             window.bind('<Control-s>', lambda e: save_file())
         
-        ttk.Button(button_frame, text="Close", command=window.destroy).pack(side=tk.RIGHT)
+        ResponsiveButton(button_frame, text="Close", command=window.destroy).pack(side=tk.RIGHT)
         
         # Focus on text area
         text_widget.focus_set()

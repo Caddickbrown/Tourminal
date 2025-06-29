@@ -192,9 +192,13 @@ def get_file_stats(filepath):
             words = len(content.split())
             lines = content.count('\n') + 1
             chars = len(content)
-            return {"words": words, "lines": lines, "chars": chars}
+            
+            # Count entries (lines starting with #)
+            entries = content.count('\n# ') + (1 if content.startswith('# ') else 0)
+            
+            return {"words": words, "lines": lines, "chars": chars, "entries": entries}
     except:
-        return {"words": 0, "lines": 0, "chars": 0}
+        return {"words": 0, "lines": 0, "chars": 0, "entries": 0}
 
 def get_daily_files():
     """Get list of daily journal files"""
@@ -1036,7 +1040,18 @@ def import_markdown_files(stdscr):
             imported_count = 0
             
             for entry in entries:
-                entry_content = f"# {format_timestamp()}{entry['title']}\n\ntags: {entry['tags']}, imported\n\n{entry['content']}\n"
+                # Format entry with tags at the end
+                entry_content = f"# {entry['title']}\n\n{entry['content']}"
+                if entry['tags']:
+                    # Add imported tag
+                    tags = entry['tags'] + ", imported"
+                    tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+                    if tag_list:
+                        entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
+                else:
+                    entry_content += "\n\n@imported"
+                
+                entry_content += "\n"
                 append_to_daily_file(today_file, entry_content)
                 imported_count += 1
             
@@ -1045,7 +1060,7 @@ def import_markdown_files(stdscr):
         else:
             # Import as single entry
             title = f"Imported from {os.path.basename(file_path)}"
-            entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, markdown\n\n{content}\n"
+            entry_content = f"# {title}\n\n{content}\n\n@imported @markdown\n"
             
             today_file = get_today_filename()
             append_to_daily_file(today_file, entry_content)
@@ -1053,11 +1068,13 @@ def import_markdown_files(stdscr):
             safe_addstr(stdscr, 4, 0, f"✅ Import successful!")
             safe_addstr(stdscr, 5, 0, f"Imported to: {today_file}")
         
+        safe_addstr(stdscr, 7, 0, "Press any key to continue...")
+        stdscr.getch()
+        
     except Exception as e:
-        safe_addstr(stdscr, 4, 0, f"❌ Import failed: {str(e)}")
-    
-    safe_addstr(stdscr, 7, 0, "Press any key to continue...")
-    stdscr.getch()
+        safe_addstr(stdscr, 4, 0, f"❌ Import failed: {e}")
+        safe_addstr(stdscr, 5, 0, "Press any key to continue...")
+        stdscr.getch()
 
 def import_json_export(stdscr):
     """Import from JSON export format"""
@@ -1142,21 +1159,32 @@ def batch_import_directory(stdscr):
                         entries = parse_entries_from_content(content, filename)
                         if entries:
                             for entry in entries:
-                                entry_content = f"# {format_timestamp()}{entry['title']}\n\ntags: {entry['tags']}, imported\n\n{entry['content']}\n"
+                                # Format entry with tags at the end
+                                entry_content = f"# {entry['title']}\n\n{entry['content']}"
+                                if entry['tags']:
+                                    # Add imported tag
+                                    tags = entry['tags'] + ", imported"
+                                    tag_list = [tag.strip() for tag in tags.split(',') if tag.strip()]
+                                    if tag_list:
+                                        entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
+                                else:
+                                    entry_content += "\n\n@imported"
+                                
+                                entry_content += "\n"
                                 today_file = get_today_filename()
                                 append_to_daily_file(today_file, entry_content)
                                 imported_entries += 1
                         else:
                             # Import as single entry
                             title = f"Imported from {filename}"
-                            entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, batch\n\n{content}\n"
+                            entry_content = f"# {title}\n\n{content}\n\n@imported @batch\n"
                             today_file = get_today_filename()
                             append_to_daily_file(today_file, entry_content)
                             imported_entries += 1
                     else:
                         # Import text file as single entry
                         title = f"Imported from {filename}"
-                        entry_content = f"# {format_timestamp()}{title}\n\ntags: imported, batch\n\n{content}\n"
+                        entry_content = f"# {title}\n\n{content}\n\n@imported @batch\n"
                         today_file = get_today_filename()
                         append_to_daily_file(today_file, entry_content)
                         imported_entries += 1
@@ -2233,97 +2261,98 @@ def new_entry_with_template(stdscr, use_editor=False):
     
     today_file = get_today_filename()
     
+    # Get content from user or external editor
     if use_editor:
-        # Create entry with template content
-        if template:
-            entry_content = f"# {title}\n\ntags: {tags}\n\n{template['content']}\n"
-        else:
-            entry_content = f"# {title}\n\ntags: {tags}\n\n"
-        
-        append_to_daily_file(today_file, entry_content)
-        
-        stdscr.addstr(3, 0, "Press any key to open editor...")
-        stdscr.getch()
-        curses.endwin()
-        
+        # Use external editor
         settings = get_settings()
-        editor = settings["default_editor"]
-        if platform.system() == "Windows" and editor == "nano":
-            editor = "notepad.exe"
+        editor = settings.get("default_editor", "nano")
         
-        filepath = os.path.join(settings["journal_directory"], today_file)
-        subprocess.call([editor, filepath])
-    else:
-        # Show template content for terminal editing
-        if template:
-            stdscr.clear()
-            stdscr.addstr(0, 0, f"Template: {template['title']}")
-            stdscr.addstr(1, 0, "You can edit this template or start fresh")
-            stdscr.addstr(3, 0, "Press Enter to edit template, ESC to start fresh:")
-            stdscr.refresh()
+        # Create temporary file for editing
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+            temp_file.write(f"# {title}\n\n")
+            temp_file.flush()
+            temp_file_path = temp_file.name
+        
+        try:
+            # Open in external editor
+            subprocess.call([editor, temp_file_path])
             
-            choice = stdscr.getch()
-            if choice == 27:  # ESC - start fresh
-                content = write_in_terminal(stdscr, title, tags)
-            else:  # Enter - edit template
-                content = write_in_terminal_with_prefill(stdscr, title, tags, template['content'])
-        else:
-            content = write_in_terminal(stdscr, title, tags)
-        
-        # Auto-detect tags from content if enabled
-        settings = get_settings()
-        final_tags = tags
-        if settings.get("auto_detect_tags", True) and content:
-            detected_tags = extract_tags_from_content(content)
-            if detected_tags:
-                if settings.get("merge_detected_tags", True):
-                    final_tags = merge_tags(tags, detected_tags)
-                else:
-                    final_tags = ", ".join(detected_tags)
-                
-                # Show tag detection feedback
-                stdscr.clear()
-                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
-                
-                if detected_tags:
-                    stdscr.addstr(2, 0, f"Auto-detected tags: {', '.join(detected_tags)}")
-                    stdscr.addstr(3, 0, f"Original tags: {tags}")
-                    stdscr.addstr(4, 0, f"Final tags: {final_tags}")
-                    stdscr.addstr(5, 0, f"Tag detection settings: auto_detect={settings.get('auto_detect_tags', True)}, merge={settings.get('merge_detected_tags', True)}")
-                
-                stdscr.addstr(7, 0, "Press any key to continue...")
-                stdscr.getch()
-            else:
-                # Show that no tags were detected
-                stdscr.clear()
-                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
-                stdscr.addstr(2, 0, "No tags detected in content")
-                stdscr.addstr(3, 0, f"Original tags: {tags}")
-                stdscr.addstr(4, 0, f"Final tags: {final_tags}")
-                stdscr.addstr(6, 0, "Press any key to continue...")
-                stdscr.getch()
-        
-        entry_content = f"# {title}\n\ntags: {final_tags}\n\n{content}\n"
-        append_to_daily_file(today_file, entry_content)
-        
-        # Show success message
-        stats = get_file_stats(os.path.join(get_settings()["journal_directory"], today_file))
-        
-        for i in range(3, 0, -1):
+            # Read back the content
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Remove the temporary file
+            os.unlink(temp_file_path)
+            
+        except Exception as e:
+            # Clean up temp file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+            
+            stdscr.clear()
+            stdscr.addstr(0, 0, f"Error opening editor: {e}")
+            stdscr.addstr(1, 0, "Press any key to continue...")
+            stdscr.getch()
+            return
+    else:
+        # Use built-in terminal editor
+        content = write_in_terminal(stdscr, title, tags)
+        if content is None:  # ESC pressed
+            return
+    
+    # Process tags - only use explicitly entered tags, not auto-detected ones
+    settings = get_settings()
+    final_tags = tags  # Only use tags from the input field
+    
+    if settings.get("auto_detect_tags", True) and content:
+        detected_tags = extract_tags_from_content(content)
+        if detected_tags:
+            # Show tag detection feedback but don't add them to final_tags
             stdscr.clear()
             stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-            stdscr.addstr(1, 0, f"Words: {get_word_count(content)} | File words: {stats['words']}")
-            stdscr.addstr(3, 0, f"Continuing in {i} seconds... (Press any key to continue now)")
-            stdscr.refresh()
+            stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
             
-            stdscr.timeout(1000)
-            key = stdscr.getch()
-            if key != -1:
-                break
-        
-        stdscr.timeout(-1)
+            if detected_tags:
+                stdscr.addstr(2, 0, f"Auto-detected tags in content: {', '.join(detected_tags)}")
+                stdscr.addstr(3, 0, f"Explicitly entered tags: {tags}")
+                stdscr.addstr(4, 0, f"Tags will appear at bottom: {final_tags}")
+                stdscr.addstr(5, 0, f"Note: Auto-detected tags remain in content")
+            
+            stdscr.addstr(7, 0, "Press any key to continue...")
+            stdscr.getch()
+        else:
+            # Show that no tags were detected
+            stdscr.clear()
+            stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+            stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
+            stdscr.addstr(2, 0, "No tags detected in content")
+            stdscr.addstr(3, 0, f"Explicitly entered tags: {tags}")
+            stdscr.addstr(4, 0, f"Tags will appear at bottom: {final_tags}")
+            stdscr.addstr(6, 0, "Press any key to continue...")
+            stdscr.getch()
+    
+    # Format entry with only explicitly entered tags at the end
+    entry_content = f"# {title}\n\n{content}"
+    if final_tags:
+        # Convert comma-separated tags to @tag format
+        tag_list = [tag.strip() for tag in final_tags.split(',') if tag.strip()]
+        if tag_list:
+            entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
+    
+    entry_content += "\n"
+    append_to_daily_file(today_file, entry_content)
+    
+    # Show success message
+    stats = get_file_stats(os.path.join(get_settings()["journal_directory"], today_file))
+    stdscr.clear()
+    stdscr.addstr(0, 0, f"✅ Entry added to: {today_file}")
+    stdscr.addstr(1, 0, f"📊 File stats: {stats['entries']} entries, {stats['words']} words")
+    stdscr.addstr(2, 0, f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    stdscr.addstr(4, 0, "Press any key to continue...")
+    stdscr.getch()
 
 def write_in_terminal_with_prefill(stdscr, title, tags, prefill_content):
     """Write entry content in terminal with prefilled template content"""
@@ -2553,7 +2582,11 @@ def parse_entries_from_content(content, filename):
         if line.strip().startswith('# '):
             # Save previous entry
             if current_entry:
-                current_entry['content'] = '\n'.join(current_content).strip()
+                # Extract tags from the end of content
+                content_text = '\n'.join(current_content).strip()
+                tags = extract_tags_from_end_of_content(content_text)
+                current_entry['content'] = content_text
+                current_entry['tags'] = tags
                 entries.append(current_entry)
             
             # Start new entry
@@ -2567,17 +2600,55 @@ def parse_entries_from_content(content, filename):
             }
             current_content = []
             
-        elif current_entry and line.strip().startswith('tags:'):
-            current_entry['tags'] = line[5:].strip()
         elif current_entry:
             current_content.append(line)
     
     # Add the last entry
     if current_entry:
-        current_entry['content'] = '\n'.join(current_content).strip()
+        # Extract tags from the end of content
+        content_text = '\n'.join(current_content).strip()
+        tags = extract_tags_from_end_of_content(content_text)
+        current_entry['content'] = content_text
+        current_entry['tags'] = tags
         entries.append(current_entry)
     
     return entries
+
+def extract_tags_from_end_of_content(content):
+    """Extract tags from the end of content in @tag format"""
+    if not content:
+        return ""
+    
+    lines = content.split('\n')
+    tags = []
+    
+    # Look for @tags at the end of the content
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Check if this line contains @tags
+        words = line.split()
+        line_tags = []
+        for word in words:
+            if word.startswith('@'):
+                tag = word[1:].rstrip('.,;:!?')
+                if tag and any(c.isalnum() for c in tag):
+                    line_tags.append(tag.lower())
+        
+        if line_tags:
+            # Found tags, add them and stop looking
+            tags.extend(reversed(line_tags))  # Reverse to maintain order
+            break
+        elif line.startswith('#'):
+            # Found a header, stop looking
+            break
+        else:
+            # This line doesn't contain tags, stop looking
+            break
+    
+    return ", ".join(reversed(tags))  # Reverse again to get original order
 
 def get_all_entries():
     """Get all individual entries from all daily files"""
@@ -4153,81 +4224,98 @@ def new_blank_entry(stdscr, use_editor=False):
     
     today_file = get_today_filename()
     
+    # Get content from user or external editor
     if use_editor:
-        # Create blank entry
-        entry_content = f"# {title}\n\ntags: {tags}\n\n"
-        
-        append_to_daily_file(today_file, entry_content)
-        
-        stdscr.addstr(3, 0, "Press any key to open editor...")
-        stdscr.getch()
-        curses.endwin()
-        
+        # Use external editor
         settings = get_settings()
-        editor = settings["default_editor"]
-        if platform.system() == "Windows" and editor == "nano":
-            editor = "notepad.exe"
+        editor = settings.get("default_editor", "nano")
         
-        filepath = os.path.join(settings["journal_directory"], today_file)
-        subprocess.call([editor, filepath])
+        # Create temporary file for editing
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
+            temp_file.write(f"# {title}\n\n")
+            temp_file.flush()
+            temp_file_path = temp_file.name
+        
+        try:
+            # Open in external editor
+            subprocess.call([editor, temp_file_path])
+            
+            # Read back the content
+            with open(temp_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Remove the temporary file
+            os.unlink(temp_file_path)
+            
+        except Exception as e:
+            # Clean up temp file
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+            
+            stdscr.clear()
+            stdscr.addstr(0, 0, f"Error opening editor: {e}")
+            stdscr.addstr(1, 0, "Press any key to continue...")
+            stdscr.getch()
+            return
     else:
-        # Write content in terminal
+        # Use built-in terminal editor
         content = write_in_terminal(stdscr, title, tags)
-        
-        # Auto-detect tags from content if enabled
-        settings = get_settings()
-        final_tags = tags
-        if settings.get("auto_detect_tags", True) and content:
-            detected_tags = extract_tags_from_content(content)
-            if detected_tags:
-                if settings.get("merge_detected_tags", True):
-                    final_tags = merge_tags(tags, detected_tags)
-                else:
-                    final_tags = ", ".join(detected_tags)
-                
-                # Show tag detection feedback
-                stdscr.clear()
-                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
-                
-                if detected_tags:
-                    stdscr.addstr(2, 0, f"Auto-detected tags: {', '.join(detected_tags)}")
-                    stdscr.addstr(3, 0, f"Original tags: {tags}")
-                    stdscr.addstr(4, 0, f"Final tags: {final_tags}")
-                    stdscr.addstr(5, 0, f"Tag detection settings: auto_detect={settings.get('auto_detect_tags', True)}, merge={settings.get('merge_detected_tags', True)}")
-                
-                stdscr.addstr(7, 0, "Press any key to continue...")
-                stdscr.getch()
-            else:
-                # Show that no tags were detected
-                stdscr.clear()
-                stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-                stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
-                stdscr.addstr(2, 0, "No tags detected in content")
-                stdscr.addstr(3, 0, f"Original tags: {tags}")
-                stdscr.addstr(4, 0, f"Final tags: {final_tags}")
-                stdscr.addstr(6, 0, "Press any key to continue...")
-                stdscr.getch()
-        
-        entry_content = f"# {title}\n\ntags: {final_tags}\n\n{content}\n"
-        append_to_daily_file(today_file, entry_content)
-        
-        # Show success message
-        stats = get_file_stats(os.path.join(get_settings()["journal_directory"], today_file))
-        
-        for i in range(3, 0, -1):
+        if content is None:  # ESC pressed
+            return
+    
+    # Process tags - only use explicitly entered tags, not auto-detected ones
+    settings = get_settings()
+    final_tags = tags  # Only use tags from the input field
+    
+    if settings.get("auto_detect_tags", True) and content:
+        detected_tags = extract_tags_from_content(content)
+        if detected_tags:
+            # Show tag detection feedback but don't add them to final_tags
             stdscr.clear()
             stdscr.addstr(0, 0, f"Entry added to: {today_file}")
-            stdscr.addstr(1, 0, f"Words: {get_word_count(content)} | File words: {stats['words']}")
-            stdscr.addstr(3, 0, f"Continuing in {i} seconds... (Press any key to continue now)")
-            stdscr.refresh()
+            stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
             
-            stdscr.timeout(1000)
-            key = stdscr.getch()
-            if key != -1:
-                break
-        
-        stdscr.timeout(-1)
+            if detected_tags:
+                stdscr.addstr(2, 0, f"Auto-detected tags in content: {', '.join(detected_tags)}")
+                stdscr.addstr(3, 0, f"Explicitly entered tags: {tags}")
+                stdscr.addstr(4, 0, f"Tags will appear at bottom: {final_tags}")
+                stdscr.addstr(5, 0, f"Note: Auto-detected tags remain in content")
+            
+            stdscr.addstr(7, 0, "Press any key to continue...")
+            stdscr.getch()
+        else:
+            # Show that no tags were detected
+            stdscr.clear()
+            stdscr.addstr(0, 0, f"Entry added to: {today_file}")
+            stdscr.addstr(1, 0, f"Words: {get_word_count(content)}")
+            stdscr.addstr(2, 0, "No tags detected in content")
+            stdscr.addstr(3, 0, f"Explicitly entered tags: {tags}")
+            stdscr.addstr(4, 0, f"Tags will appear at bottom: {final_tags}")
+            stdscr.addstr(6, 0, "Press any key to continue...")
+            stdscr.getch()
+    
+    # Format entry with only explicitly entered tags at the end
+    entry_content = f"# {title}\n\n{content}"
+    if final_tags:
+        # Convert comma-separated tags to @tag format
+        tag_list = [tag.strip() for tag in final_tags.split(',') if tag.strip()]
+        if tag_list:
+            entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
+    
+    entry_content += "\n"
+    append_to_daily_file(today_file, entry_content)
+    
+    # Show success message
+    stats = get_file_stats(os.path.join(get_settings()["journal_directory"], today_file))
+    stdscr.clear()
+    stdscr.addstr(0, 0, f"✅ Entry added to: {today_file}")
+    stdscr.addstr(1, 0, f"📊 File stats: {stats['entries']} entries, {stats['words']} words")
+    stdscr.addstr(2, 0, f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    stdscr.addstr(4, 0, "Press any key to continue...")
+    stdscr.getch()
 
 if __name__ == "__main__":
     main()
