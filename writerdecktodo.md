@@ -1,5 +1,7 @@
 # 🧾 Writerdeck Integration To-Do for `daily_journal.py`
 
+A list of things to do to integrate daily_journal.py script with a Writerdeck.
+
 ## 🧠 System Setup
 - [ ] Enable auto-login to terminal (so it boots directly to command line)
 - [ ] Set locale and keyboard layout properly (`raspi-config`)
