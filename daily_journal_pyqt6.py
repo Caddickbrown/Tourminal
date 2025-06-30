@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QPushButton, QLabel, QLineEdit, QTextEdit, 
     QListWidget, QListWidgetItem, QDialog, QMessageBox, 
     QFileDialog, QCheckBox, QGroupBox, QSplitter, QFrame,
-    QScrollArea, QSizePolicy, QTabWidget, QTextBrowser
+    QScrollArea, QSizePolicy, QTabWidget, QTextBrowser, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt6.QtGui import QFont, QIcon, QAction, QKeySequence, QPalette, QColor
@@ -154,10 +154,16 @@ class EntryDialog(QDialog):
                 900, 700
             )
         
+        # If no entry_title provided, include the date like in the original
+        if not entry_title:
+            current_datetime = format_timestamp()
+            entry_title = f"{current_datetime}"
+        
         self.create_widgets(entry_title, tags, content)
         
-        # Focus on title entry
+        # Focus on title entry and move cursor to end
         self.title_entry.setFocus()
+        self.title_entry.setCursorPosition(len(entry_title))
     
     def create_widgets(self, entry_title, tags, content):
         layout = QVBoxLayout()
@@ -177,16 +183,10 @@ class EntryDialog(QDialog):
         tags_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         layout.addWidget(tags_label)
         
-        tags_layout = QHBoxLayout()
         self.tags_entry = QLineEdit()
         self.tags_entry.setPlaceholderText("Enter tags separated by spaces...")
         self.tags_entry.setText(tags)
-        tags_layout.addWidget(self.tags_entry)
-        
-        self.auto_detect_btn = QPushButton("Auto-Detect")
-        self.auto_detect_btn.clicked.connect(self.auto_detect_tags)
-        tags_layout.addWidget(self.auto_detect_btn)
-        layout.addLayout(tags_layout)
+        layout.addWidget(self.tags_entry)
         
         # Content
         content_label = QLabel("Content:")
@@ -217,25 +217,6 @@ class EntryDialog(QDialog):
         # Connect Enter key to save
         self.title_entry.returnPressed.connect(self.save_entry)
     
-    def auto_detect_tags(self):
-        """Auto-detect tags from content"""
-        content = self.content_text.toPlainText()
-        detected_tags = extract_tags_from_content(content)
-        
-        if detected_tags:
-            current_tags = self.tags_entry.text()
-            if current_tags:
-                # Merge with existing tags
-                existing_tags = set(current_tags.split())
-                all_tags = existing_tags.union(detected_tags)
-                self.tags_entry.setText(" ".join(sorted(all_tags)))
-            else:
-                self.tags_entry.setText(" ".join(detected_tags))
-            
-            QMessageBox.information(self, "Tags Detected", f"Found tags: {', '.join(detected_tags)}")
-        else:
-            QMessageBox.information(self, "No Tags", "No tags detected in content.")
-    
     def save_entry(self):
         """Save the entry"""
         title = self.title_entry.text().strip()
@@ -258,14 +239,13 @@ class EntryDialog(QDialog):
                     f"Note: Auto-detected tags remain in content, only explicit tags appear at bottom.")
         
         # Format entry with only explicitly entered tags at the end
-        timestamp = format_timestamp()
         entry_lines = []
         
         if title:
             entry_lines.append(f"# {title}")
             entry_lines.append("")
         
-        entry_lines.append(f"{timestamp}{content}")
+        entry_lines.append(content)
         
         # Add only explicitly entered tags at the end
         if tags:
@@ -595,6 +575,25 @@ class SettingsDialog(QDialog):
         options_group.setLayout(options_layout)
         scroll_layout.addWidget(options_group)
         
+        # Appearance Settings
+        appearance_group = QGroupBox("Appearance")
+        appearance_layout = QVBoxLayout()
+        
+        appearance_layout.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["System", "Light", "Dark"])
+        current_theme = self.settings.get("theme", "system").capitalize()
+        if current_theme == "System":
+            self.theme_combo.setCurrentText("System")
+        elif current_theme == "Light":
+            self.theme_combo.setCurrentText("Light")
+        elif current_theme == "Dark":
+            self.theme_combo.setCurrentText("Dark")
+        appearance_layout.addWidget(self.theme_combo)
+        
+        appearance_group.setLayout(appearance_layout)
+        scroll_layout.addWidget(appearance_group)
+        
         scroll_widget.setLayout(scroll_layout)
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
@@ -636,7 +635,8 @@ class SettingsDialog(QDialog):
             "date_format": self.date_entry.text(),
             "auto_save": self.auto_save_check.isChecked(),
             "auto_backup": self.auto_backup_check.isChecked(),
-            "auto_detect_tags": self.auto_detect_tags_check.isChecked()
+            "auto_detect_tags": self.auto_detect_tags_check.isChecked(),
+            "theme": self.theme_combo.currentText().lower()
         })
         
         save_settings(self.settings)
@@ -738,6 +738,8 @@ class DailyJournalPyQt6(QMainWindow):
         # File list
         self.file_list = QListWidget()
         self.file_list.itemDoubleClicked.connect(self.view_selected_file)
+        # Connect single selection
+        self.file_list.itemSelectionChanged.connect(self.show_selected_file_in_editor)
         left_layout.addWidget(self.file_list)
         
         splitter.addWidget(left_panel)
@@ -796,6 +798,24 @@ class DailyJournalPyQt6(QMainWindow):
         settings_btn.setStyleSheet("background-color: #6c757d; color: white; padding: 8px 16px;")
         settings_btn.clicked.connect(self.show_settings)
         right_layout.addWidget(settings_btn)
+        
+        # --- New: Inline file editor below status/settings ---
+        self.inline_filename_label = QLabel("")
+        self.inline_filename_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        right_layout.addWidget(self.inline_filename_label)
+        
+        self.inline_editor = QTextEdit()
+        self.inline_editor.setPlaceholderText("Select a file to view and edit its content here...")
+        self.inline_editor.setFont(QFont(self.settings.get("font_family", "Consolas"), self.settings.get("font_size", 11)))
+        right_layout.addWidget(self.inline_editor)
+        
+        self.inline_save_btn = QPushButton("Save Changes")
+        self.inline_save_btn.setStyleSheet("background-color: #28a745; color: white; padding: 8px 16px;")
+        self.inline_save_btn.clicked.connect(self.save_inline_editor)
+        right_layout.addWidget(self.inline_save_btn)
+        self.inline_editor.setEnabled(False)
+        self.inline_save_btn.setEnabled(False)
+        self.inline_filename_label.setVisible(False)
         
         right_layout.addStretch()
         splitter.addWidget(right_panel)
@@ -950,6 +970,35 @@ class DailyJournalPyQt6(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # Reload settings
             self.settings = load_settings()
+            # Apply theme immediately
+            theme = self.settings.get("theme", "system")
+            apply_theme(QApplication.instance(), theme)
+    
+    def show_selected_file_in_editor(self):
+        current_item = self.file_list.currentItem()
+        if current_item:
+            filename = current_item.data(Qt.ItemDataRole.UserRole)
+            content = read_daily_file(filename)
+            self.inline_filename_label.setText(f"Editing: {filename}")
+            self.inline_editor.setPlainText(content)
+            self.inline_editor.setEnabled(True)
+            self.inline_save_btn.setEnabled(True)
+            self.inline_filename_label.setVisible(True)
+        else:
+            self.inline_filename_label.setText("")
+            self.inline_editor.clear()
+            self.inline_editor.setEnabled(False)
+            self.inline_save_btn.setEnabled(False)
+            self.inline_filename_label.setVisible(False)
+
+    def save_inline_editor(self):
+        current_item = self.file_list.currentItem()
+        if current_item:
+            filename = current_item.data(Qt.ItemDataRole.UserRole)
+            new_content = self.inline_editor.toPlainText()
+            write_daily_file(filename, new_content)
+            QMessageBox.information(self, "Success", f"Saved changes to {filename}")
+            self.refresh_file_list()
     
     def closeEvent(self, event):
         """Handle window closing"""
@@ -959,6 +1008,162 @@ class DailyJournalPyQt6(QMainWindow):
         save_settings(self.settings)
         event.accept()
 
+def apply_theme(app, theme="system"):
+    """Apply theme to the application"""
+    if theme == "dark":
+        # Dark theme palette
+        dark_palette = QPalette()
+        
+        # Set dark colors
+        dark_palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
+        dark_palette.setColor(QPalette.ColorRole.WindowText, QColor(255, 255, 255))
+        dark_palette.setColor(QPalette.ColorRole.Base, QColor(25, 25, 25))
+        dark_palette.setColor(QPalette.ColorRole.AlternateBase, QColor(53, 53, 53))
+        dark_palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+        dark_palette.setColor(QPalette.ColorRole.ToolTipText, QColor(255, 255, 255))
+        dark_palette.setColor(QPalette.ColorRole.Text, QColor(255, 255, 255))
+        dark_palette.setColor(QPalette.ColorRole.Button, QColor(53, 53, 53))
+        dark_palette.setColor(QPalette.ColorRole.ButtonText, QColor(255, 255, 255))
+        dark_palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
+        dark_palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
+        dark_palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
+        dark_palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+        
+        app.setPalette(dark_palette)
+        
+        # Set dark stylesheet for additional styling
+        app.setStyleSheet("""
+            QMainWindow {
+                background-color: #353535;
+                color: #ffffff;
+            }
+            QWidget {
+                background-color: #353535;
+                color: #ffffff;
+            }
+            QTextEdit, QLineEdit {
+                background-color: #191919;
+                color: #ffffff;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 5px;
+            }
+            QTextEdit:focus, QLineEdit:focus {
+                border: 1px solid #2a82da;
+            }
+            QPushButton {
+                background-color: #555555;
+                color: #ffffff;
+                border: 1px solid #777777;
+                border-radius: 3px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #666666;
+            }
+            QPushButton:pressed {
+                background-color: #444444;
+            }
+            QListWidget {
+                background-color: #191919;
+                color: #ffffff;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                alternate-background-color: #252525;
+            }
+            QListWidget::item {
+                padding: 5px;
+                border-bottom: 1px solid #333333;
+            }
+            QListWidget::item:selected {
+                background-color: #2a82da;
+                color: #ffffff;
+            }
+            QListWidget::item:hover {
+                background-color: #444444;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #555555;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+            QCheckBox {
+                color: #ffffff;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 1px solid #555555;
+                background-color: #191919;
+            }
+            QCheckBox::indicator:checked {
+                border: 1px solid #2a82da;
+                background-color: #2a82da;
+            }
+            QScrollBar:vertical {
+                background-color: #353535;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #555555;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #666666;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QComboBox {
+                background-color: #191919;
+                color: #ffffff;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 5px;
+            }
+            QComboBox:focus {
+                border: 1px solid #2a82da;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #ffffff;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #191919;
+                color: #ffffff;
+                border: 1px solid #555555;
+                selection-background-color: #2a82da;
+            }
+        """)
+        
+    elif theme == "light":
+        # Light theme - use system default
+        app.setPalette(app.style().standardPalette())
+        app.setStyleSheet("")
+        
+    else:  # system theme
+        # Use system theme - no custom styling
+        app.setPalette(app.style().standardPalette())
+        app.setStyleSheet("")
+
 def main():
     """Main function"""
     ensure_directories()
@@ -967,6 +1172,11 @@ def main():
     
     # Set application style
     app.setStyle('Fusion')
+    
+    # Load settings and apply theme
+    settings = load_settings()
+    theme = settings.get("theme", "system")
+    apply_theme(app, theme)
     
     # Create and show main window
     window = DailyJournalPyQt6()

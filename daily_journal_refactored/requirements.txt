@@ -1,0 +1,12 @@
+# Core dependencies
+# No external dependencies required for basic functionality
+
+# Optional dependencies for enhanced features
+# reportlab>=3.6.0  # For PDF export (uncomment if needed)
+# jinja2>=3.0.0     # For HTML export templates (uncomment if needed)
+
+# Development dependencies (uncomment for development)
+# pytest>=7.0.0     # For unit testing
+# mypy>=1.0.0       # For type checking
+# flake8>=5.0.0     # For code linting
+# black>=22.0.0     # For code formatting 

@@ -846,7 +846,7 @@ def export_by_tags(stdscr, format_type):
     curses.echo()
     stdscr.clear()
     safe_addstr(stdscr, 0, 0, f"Export by Tags to {format_type.upper()}")
-    safe_addstr(stdscr, 2, 0, "Tags to include (comma separated): ")
+    safe_addstr(stdscr, 2, 0, "Tags to include (space separated): ")
     
     tags_input = input_with_prefill(stdscr, 2, 33, "")
     if not tags_input:
@@ -856,7 +856,7 @@ def export_by_tags(stdscr, format_type):
     curses.noecho()
     
     # Parse tags
-    target_tags = [tag.strip().lower() for tag in tags_input.split(',') if tag.strip()]
+    target_tags = [tag.strip().lower() for tag in tags_input.split() if tag.strip()]
     
     if not target_tags:
         safe_addstr(stdscr, 4, 0, "No valid tags specified")
@@ -1332,9 +1332,9 @@ def search_by_tags_only(stdscr):
     curses.echo()
     stdscr.clear()
     safe_addstr(stdscr, 0, 0, "Search by Tags Only")
-    safe_addstr(stdscr, 2, 0, "Tags (comma separated): ")
+    safe_addstr(stdscr, 2, 0, "Tags (space separated): ")
     
-    tags_input = input_with_prefill(stdscr, 2, 25, "")
+    tags_input = input_with_prefill(stdscr, 2, 33, "")
     if not tags_input:
         curses.noecho()
         return
@@ -1342,7 +1342,7 @@ def search_by_tags_only(stdscr):
     curses.noecho()
     
     # Parse tags
-    target_tags = [tag.strip().lower() for tag in tags_input.split(',') if tag.strip()]
+    target_tags = [tag.strip().lower() for tag in tags_input.split() if tag.strip()]
     
     if not target_tags:
         safe_addstr(stdscr, 4, 0, "No valid tags specified")
@@ -2251,7 +2251,7 @@ def new_entry_with_template(stdscr, use_editor=False):
     if not title.strip():
         title = default_title
     
-    stdscr.addstr(1, 0, "Tags (comma separated): ")
+    stdscr.addstr(1, 0, "Tags (space separated): ")
     tags = input_with_prefill(stdscr, 1, 25, default_tags)
     if tags is None:  # ESC pressed
         curses.noecho()
@@ -2337,8 +2337,8 @@ def new_entry_with_template(stdscr, use_editor=False):
     # Format entry with only explicitly entered tags at the end
     entry_content = f"# {title}\n\n{content}"
     if final_tags:
-        # Convert comma-separated tags to @tag format
-        tag_list = [tag.strip() for tag in final_tags.split(',') if tag.strip()]
+        # Convert space-separated tags to @tag format
+        tag_list = [tag.strip() for tag in final_tags.split() if tag.strip()]
         if tag_list:
             entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
     
@@ -4214,7 +4214,7 @@ def new_blank_entry(stdscr, use_editor=False):
     if not title.strip():
         title = default_title
     
-    stdscr.addstr(1, 0, "Tags (comma separated): ")
+    stdscr.addstr(1, 0, "Tags (space separated): ")
     tags = input_with_prefill(stdscr, 1, 25, default_tags)
     if tags is None:  # ESC pressed
         curses.noecho()
@@ -4300,8 +4300,8 @@ def new_blank_entry(stdscr, use_editor=False):
     # Format entry with only explicitly entered tags at the end
     entry_content = f"# {title}\n\n{content}"
     if final_tags:
-        # Convert comma-separated tags to @tag format
-        tag_list = [tag.strip() for tag in final_tags.split(',') if tag.strip()]
+        # Convert space-separated tags to @tag format
+        tag_list = [tag.strip() for tag in final_tags.split() if tag.strip()]
         if tag_list:
             entry_content += f"\n\n{' '.join([f'@{tag}' for tag in tag_list])}"
     
