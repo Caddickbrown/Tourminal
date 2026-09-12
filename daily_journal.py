@@ -24,7 +24,7 @@ BACKUP_DIR = os.path.expanduser("~/journal/backups")
 # Default settings
 DEFAULT_SETTINGS = {
     "journal_directory": JOURNAL_DIR,
-    "backup_directory": BACKUP_DIR,
+    "backup_directory": BACKUP_DIR, 
     "default_editor": "nano",
     "date_format": "%Y-%m-%d",
     "filename_format": "daily",
